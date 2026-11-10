@@ -294,7 +294,7 @@
           <button class="btn btn-secondary btn-save-meta" id="saveTrackMetaBtn">💾 Speichern</button>
         </div>
 
-        <!-- GROSSE INTERAKTIVE WELLENFORM -->
+        <!-- KOMPAKTE INTERAKTIVE WELLENFORM -->
         <div class="waveform-editor-box">
           <div class="waveform-toolbar">
             <div class="wf-controls-left">
@@ -304,17 +304,14 @@
               <span class="editor-time-badge">
                 Position: <strong id="editorCursorTime">0:00.0</strong> / <span id="editorTotalTime">0:00.0</span>
               </span>
+              <button class="btn btn-accent" id="markCurrentPosBtn">
+                📍 Aktuelle Position als Highlight speichern
+              </button>
             </div>
-            <button class="btn btn-accent" id="markCurrentPosBtn">
-              📍 Aktuelle Position (<span id="markBtnTime">0:00.0</span>) als Highlight anlegen
-            </button>
           </div>
 
           <div class="waveform-canvas-container" id="editorWaveformContainer">
-            <canvas id="editorWaveformCanvas" width="960" height="160"></canvas>
-          </div>
-          <div class="waveform-hint">
-            💡 <strong>Tipp:</strong> Tippe oder ziehe mit dem Finger/Maus in der Wellenform, um die genaue Stelle (z. B. den Drop oder Refrain) zu finden.
+            <canvas id="editorWaveformCanvas" width="960" height="74"></canvas>
           </div>
         </div>
 

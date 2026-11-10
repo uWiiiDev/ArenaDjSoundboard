@@ -1091,18 +1091,17 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  padding: 14px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
 .waveform-toolbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .wf-controls-left {
@@ -1110,6 +1109,7 @@ body {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  width: 100%;
 }
 
 .editor-time-badge {
@@ -1125,7 +1125,7 @@ body {
   background: #070b12;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  height: 150px;
+  height: 74px;
   position: relative;
   cursor: crosshair;
   touch-action: none;

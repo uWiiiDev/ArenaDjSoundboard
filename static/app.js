@@ -1557,7 +1557,10 @@ function closeCueEditor() {
 function updateEditorTimeDisplay(duration) {
   const t = state.editorCursorTime;
   document.getElementById("editorCursorTime").textContent = formatTime(t, true);
-  document.getElementById("markBtnTime").textContent = formatTime(t, true);
+  const markBtnTime = document.getElementById("markBtnTime");
+  if (markBtnTime) {
+    markBtnTime.textContent = formatTime(t, true);
+  }
   if (duration !== undefined) {
     document.getElementById("editorTotalTime").textContent = formatTime(duration, true);
   }
@@ -1584,16 +1587,16 @@ function drawEditorWaveform(track) {
   ctx.lineTo(w, h / 2);
   ctx.stroke();
 
-  // Waveform Balken
+  // Waveform Balken (kompakt & flach)
   peaks.forEach((p, i) => {
-    const barH = Math.max(4, p * (h - 28));
+    const barH = Math.max(3, p * (h - 12));
     const x = i * barWidth;
     const y = (h - barH) / 2;
     ctx.fillStyle = "#475569";
     ctx.fillRect(x, y, Math.max(2, barWidth - 1.5), barH);
   });
 
-  // Gespeicherte Highlights (Cue-Points) samt Fahne zeichnen
+  // Gespeicherte Highlights (Cue-Points) samt kompakter Fahne zeichnen
   (track.cues || []).forEach((cue, idx) => {
     const startX = Math.max(0, Math.min(w, (cue.start_time / dur) * w));
     const color = cue.color || "#f97316";
@@ -1605,25 +1608,25 @@ function drawEditorWaveform(track) {
     }
 
     ctx.fillStyle = color;
-    ctx.fillRect(startX - 1.5, 0, 3, h);
+    ctx.fillRect(startX - 1.5, 0, 2.5, h);
 
     // Kompakte Nummern-Fahne oben
-    ctx.font = "bold 12px sans-serif";
+    ctx.font = "bold 11px sans-serif";
     const text = `#${idx + 1} (${formatTime(cue.start_time)})`;
-    const tw = ctx.measureText(text).width + 12;
-    const flagX = Math.min(w - tw - 2, Math.max(2, startX + 3));
+    const tw = ctx.measureText(text).width + 10;
+    const flagX = Math.min(w - tw - 2, Math.max(2, startX + 2));
     ctx.fillStyle = color;
-    ctx.fillRect(flagX, 6, tw, 22);
+    ctx.fillRect(flagX, 3, tw, 17);
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(text, flagX + 6, 21);
+    ctx.fillText(text, flagX + 5, 15);
   });
 
   // Aktueller Cursor (Abspiel-/Markierposition)
   const cursorX = Math.max(0, Math.min(w, (state.editorCursorTime / dur) * w));
   ctx.fillStyle = "#38bdf8";
-  ctx.fillRect(cursorX - 1.5, 0, 3, h);
+  ctx.fillRect(cursorX - 1.5, 0, 2.5, h);
   ctx.beginPath();
-  ctx.arc(cursorX, h - 10, 6, 0, Math.PI * 2);
+  ctx.arc(cursorX, h - 7, 4.5, 0, Math.PI * 2);
   ctx.fill();
 }
 
