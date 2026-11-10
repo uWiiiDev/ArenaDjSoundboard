@@ -2221,10 +2221,150 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // ==========================================================================
-  // UPLOAD MODAL EVENTS
+  // UPLOAD MODAL & DIREKTES MP3 DRAG-AND-DROP IM LIEDER-MODUL
   // ==========================================================================
   const uploadModal = document.getElementById("uploadModal");
   const uploadFileInput = document.getElementById("uploadFileInput");
+  const panelSongsEl = document.getElementById("panelSongs");
+  const songsDropOverlay = document.getElementById("songsDropOverlay");
+  const songsDropCatLabel = document.getElementById("songsDropCatLabel");
+  const songsInlineUpload = document.getElementById("songsInlineUpload");
+  let inlineUploadTimer = null;
+
+  function resolveDropCategory() {
+    if (state.activeCategory && state.activeCategory !== "all") {
+      const activeCat = state.categories.find((c) => c.id === state.activeCategory);
+      if (activeCat) return { cat: activeCat, isAllFallback: false };
+    }
+    const fallback = state.categories[0] || {
+      id: "action",
+      name: "Zwischen Athleten",
+      icon: "🔥",
+    };
+    return { cat: fallback, isAllFallback: true };
+  }
+
+  function hasFileTransfer(e) {
+    if (!e.dataTransfer || !e.dataTransfer.types) return false;
+    return Array.from(e.dataTransfer.types).includes("Files");
+  }
+
+  function showInlineUploadBanner(msg, mode = "loading", autoHideMs = 0) {
+    if (!songsInlineUpload) return;
+    if (inlineUploadTimer) {
+      clearTimeout(inlineUploadTimer);
+      inlineUploadTimer = null;
+    }
+    songsInlineUpload.textContent = msg;
+    songsInlineUpload.classList.remove("hidden", "is-done", "is-error");
+    if (mode === "done") songsInlineUpload.classList.add("is-done");
+    if (mode === "error") songsInlineUpload.classList.add("is-error");
+    if (autoHideMs > 0) {
+      inlineUploadTimer = setTimeout(() => {
+        songsInlineUpload.classList.add("hidden");
+      }, autoHideMs);
+    }
+  }
+
+  // Verhindert, dass ein versehentlich neben das Panel gezogenes MP3 die Seite verlässt!
+  window.addEventListener("dragover", (e) => {
+    if (hasFileTransfer(e)) {
+      e.preventDefault();
+    }
+  });
+  window.addEventListener("drop", (e) => {
+    if (hasFileTransfer(e)) {
+      e.preventDefault();
+      if (songsDropOverlay) songsDropOverlay.classList.add("hidden");
+    }
+  });
+
+  if (panelSongsEl && songsDropOverlay) {
+    panelSongsEl.addEventListener("dragenter", (e) => {
+      if (!hasFileTransfer(e)) return;
+      e.preventDefault();
+      const { cat, isAllFallback } = resolveDropCategory();
+      if (songsDropCatLabel) {
+        songsDropCatLabel.textContent = isAllFallback
+          ? `Zuordnung zu Standard-Kategorie: ${cat.icon} ${cat.name}`
+          : `Wird zugeordnet zu: ${cat.icon} ${cat.name}`;
+      }
+      songsDropOverlay.classList.remove("hidden");
+    });
+
+    panelSongsEl.addEventListener("dragover", (e) => {
+      if (!hasFileTransfer(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      if (songsDropOverlay.classList.contains("hidden")) {
+        songsDropOverlay.classList.remove("hidden");
+      }
+    });
+
+    panelSongsEl.addEventListener("dragleave", (e) => {
+      if (!e.relatedTarget || !panelSongsEl.contains(e.relatedTarget)) {
+        songsDropOverlay.classList.add("hidden");
+      }
+    });
+
+    panelSongsEl.addEventListener("drop", async (e) => {
+      if (!hasFileTransfer(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      songsDropOverlay.classList.add("hidden");
+
+      const audioExtRe = /\.(mp3|wav|m4a|ogg|flac|aac|opus|webm|mp4)$/i;
+      const droppedFiles = Array.from(e.dataTransfer.files || []).filter(
+        (f) => (f.type && f.type.startsWith("audio/")) || audioExtRe.test(f.name)
+      );
+
+      if (droppedFiles.length === 0) {
+        showInlineUploadBanner(
+          "⚠️ Keine Audio-Datei erkannt (bitte MP3, WAV, M4A, OGG oder FLAC hineinziehen).",
+          "error",
+          3500
+        );
+        return;
+      }
+
+      const { cat } = resolveDropCategory();
+      const formData = new FormData();
+      droppedFiles.forEach((file) => formData.append("files", file));
+      formData.append("category_id", cat.id);
+      formData.append("color", "#f97316");
+
+      showInlineUploadBanner(
+        `⏳ Lade ${droppedFiles.length} ${
+          droppedFiles.length === 1 ? "Lied" : "Lieder"
+        } in „${cat.icon} ${cat.name}“ hoch & analysiere Wellenform...`,
+        "loading"
+      );
+
+      try {
+        const res = await fetch("/api/tracks", {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        await loadStateFromServer();
+        showInlineUploadBanner(
+          `✅ ${droppedFiles.length} ${
+            droppedFiles.length === 1 ? "Lied" : "Lieder"
+          } zu „${cat.icon} ${cat.name}“ hinzugefügt!`,
+          "done",
+          3200
+        );
+      } catch (err) {
+        showInlineUploadBanner(
+          `⚠️ Fehler beim Hochladen: ${err.message}`,
+          "error",
+          4500
+        );
+      }
+    });
+  }
 
   document.getElementById("openUploadBtn").addEventListener("click", () => {
     const sel = document.getElementById("uploadCategorySelect");
