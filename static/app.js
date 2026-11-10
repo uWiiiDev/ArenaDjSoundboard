@@ -1013,35 +1013,30 @@ async function toggleTrackLoop(trackId) {
 // UI RENDERING: KATEGORIEN & SOUNDBOARD KARTEN
 // ============================================================================
 function renderCategories() {
-  const bar = document.getElementById("categoryBar");
-  const totalCount = state.tracks.length;
+  const select = document.getElementById("categorySelect");
+  if (!select) return;
 
-  let html = `
-    <button class="cat-tab ${state.activeCategory === "all" ? "active" : ""}" data-cat="all">
-      <span>🏆 Alle Lieder</span>
-      <span class="cat-count">${totalCount}</span>
-    </button>
-  `;
+  if (
+    state.activeCategory !== "all" &&
+    !state.categories.some((c) => c.id === state.activeCategory)
+  ) {
+    state.activeCategory = "all";
+  }
+
+  const totalCount = state.tracks.length;
+  let html = `<option value="all">🏆 Alle Lieder (${totalCount})</option>`;
 
   for (const cat of state.categories) {
     const count = state.tracks.filter((t) => t.category_id === cat.id).length;
-    const isActive = state.activeCategory === cat.id;
-    html += `
-      <button class="cat-tab ${isActive ? "active" : ""}" data-cat="${escapeHtml(cat.id)}">
-        <span>${escapeHtml(cat.icon)} ${escapeHtml(cat.name)}</span>
-        <span class="cat-count">${count}</span>
-      </button>
-    `;
+    html += `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.icon)} ${escapeHtml(cat.name)} (${count})</option>`;
   }
 
-  bar.innerHTML = html;
-  bar.querySelectorAll(".cat-tab").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      state.activeCategory = btn.dataset.cat;
-      renderCategories();
-      renderSoundboard();
-    });
-  });
+  if (select.dataset.renderedHtml !== html) {
+    select.innerHTML = html;
+    select.dataset.renderedHtml = html;
+  }
+  select.value = state.activeCategory;
+  select.classList.toggle("is-filtered", state.activeCategory !== "all");
 }
 
 function getFilteredTracks() {
@@ -1834,6 +1829,17 @@ document.addEventListener("DOMContentLoaded", () => {
   // Ton-Ausgang Umschalter (🔊 Server-Ton vs. 📱 Gerät-Ton)
   document.getElementById("outServerBtn").addEventListener("click", () => setOutputMode("server"));
   document.getElementById("outLocalBtn").addEventListener("click", () => setOutputMode("local"));
+
+  // Kategorie-Dropdown in der Kopfzeile des Lieder-Moduls
+  const categorySelect = document.getElementById("categorySelect");
+  if (categorySelect) {
+    categorySelect.addEventListener("pointerdown", (e) => e.stopPropagation());
+    categorySelect.addEventListener("change", (e) => {
+      state.activeCategory = e.target.value || "all";
+      categorySelect.classList.toggle("is-filtered", state.activeCategory !== "all");
+      renderSoundboard();
+    });
+  }
 
   // Auto-Follow-Button in der Liederliste
   const autoFollowBtn = document.getElementById("autoFollowBtn");
@@ -2654,9 +2660,9 @@ function initPanelDragAndDrop(workspace) {
 
   workspace.querySelectorAll(".panel-drag-handle").forEach((handle) => {
     handle.addEventListener("pointerdown", (e) => {
-      // Nur im 3-Spalten-Modus (> 980px) und nicht bei Klick auf Buttons im Header
+      // Nur im 3-Spalten-Modus (> 980px) und nicht bei Klick auf Buttons/Dropdowns im Header
       if (window.innerWidth <= 980) return;
-      if (e.target.closest("button")) return;
+      if (e.target.closest("button, select, input")) return;
 
       const panel = handle.closest(".cockpit-panel");
       if (!panel) return;

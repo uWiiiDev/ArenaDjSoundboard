@@ -73,11 +73,6 @@
     </div>
   </header>
 
-  <!-- CATEGORY TABS -->
-  <nav class="category-bar" id="categoryBar">
-    <!-- Dynamisch gefüllt -->
-  </nav>
-
   <!-- 3-ELEMENTE DJ-COCKPIT: LISTE | REGLER | AKTUELLES LIED (FREI VERSCHIEBBAR PER DRAG & DROP) -->
   <div class="workspace" id="mainWorkspace">
     <!-- ELEMENT 1: LIEDER & HIGHLIGHTS (EIGENER AUTO-FOLLOW SCROLLBEREICH) -->
@@ -87,9 +82,19 @@
           <span class="drag-grip">⠿</span>
           <span class="panel-title-text">🎵 LIEDER & HIGHLIGHTS</span>
         </div>
-        <button type="button" class="btn-follow-pill active" id="autoFollowBtn" title="Liste läuft bei Liedwechsel automatisch zum aktiven Titel mit">
-          🎯 Auto-Mitlauf
-        </button>
+        <div class="panel-header-controls">
+          <select
+            id="categorySelect"
+            class="panel-cat-select"
+            aria-label="Kategorie wählen"
+            title="Kategorie filtern"
+          >
+            <option value="all">🏆 Alle Lieder</option>
+          </select>
+          <button type="button" class="btn-follow-pill active" id="autoFollowBtn" title="Liste läuft bei Liedwechsel automatisch zum aktiven Titel mit">
+            🎯 Auto-Mitlauf
+          </button>
+        </div>
       </div>
 
       <div class="panel-scroll-body" id="songsScrollViewport">
@@ -473,7 +478,7 @@
 
         <!-- KATEGORIEN VERWALTEN -->
         <div class="categories-manage-box">
-          <h3>Kategorien / Tabs verwalten</h3>
+          <h3>Kategorien verwalten</h3>
           <div id="settingsCategoriesList" class="settings-cat-list"></div>
           <div class="add-cat-row">
             <input type="text" id="newCatIcon" value="🎵" class="cat-icon-input" maxlength="4" />

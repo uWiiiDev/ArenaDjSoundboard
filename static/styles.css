@@ -185,50 +185,52 @@ body {
   color: #fca5a5;
 }
 
-/* CATEGORY TABS */
-.category-bar {
+/* KATEGORIE-DROPDOWN IN DER KOPFZEILE DES LIEDER-MODULS */
+.panel-header-controls {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 20px;
-  background: #0f1625;
-  border-bottom: 1px solid var(--border-color);
-  overflow-x: auto;
-  scrollbar-width: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
-.category-bar::-webkit-scrollbar {
-  display: none;
-}
-
-.cat-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-radius: 999px;
-  background: var(--bg-card);
+.panel-cat-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--bg-card);
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
   border: 1px solid var(--border-color);
-  color: var(--text-muted);
-  font-weight: 600;
-  font-size: 0.92rem;
-  white-space: nowrap;
+  color: var(--text-main);
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 5px 28px 5px 11px;
+  border-radius: 999px;
   cursor: pointer;
-  transition: all 0.15s;
+  touch-action: manipulation;
+  max-width: 240px;
+  text-overflow: ellipsis;
+  transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
 }
 
-.cat-tab.active {
-  background: var(--accent-orange);
+.panel-cat-select:hover,
+.panel-cat-select:focus {
+  border-color: var(--accent-blue);
+  outline: none;
+}
+
+.panel-cat-select.is-filtered {
+  background-color: rgba(249, 115, 22, 0.2);
   border-color: var(--accent-orange);
-  color: #fff;
-  box-shadow: 0 3px 12px rgba(249, 115, 22, 0.35);
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(249, 115, 22, 0.25);
 }
 
-.cat-count {
-  background: rgba(0, 0, 0, 0.25);
-  padding: 2px 7px;
-  border-radius: 99px;
-  font-size: 0.78rem;
+.panel-cat-select option {
+  background: #131b2c;
+  color: #f8fafc;
 }
 
 /* 3-ELEMENTE DJ-COCKPIT WORKSPACE (FREI VERSCHIEBBAR NEBENEINANDER) */
@@ -2050,14 +2052,16 @@ body {
     font-size: 0.82rem;
   }
 
-  .category-bar {
-    padding: 8px 12px;
+  .panel-drag-handle {
+    flex-wrap: wrap;
+    padding: 9px 11px;
     gap: 6px;
   }
 
-  .cat-tab {
-    padding: 8px 12px;
-    font-size: 0.84rem;
+  .panel-cat-select {
+    font-size: 16px; /* Verhindert Auto-Zoom auf iOS Safari! */
+    max-width: 210px;
+    padding: 6px 28px 6px 11px;
   }
 
   .cue-pads-grid {
