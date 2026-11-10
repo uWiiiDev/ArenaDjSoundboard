@@ -325,7 +325,7 @@ body {
 }
 
 .panel-songs {
-  flex: 1.75 1 320px;
+  flex: 2.15 1 360px;
   position: relative;
 }
 
@@ -395,11 +395,12 @@ body {
 }
 
 .panel-fader {
-  flex: 0.98 1 275px;
+  flex: 0 0 222px;
+  width: 222px;
 }
 
 .panel-deck {
-  flex: 1.12 1 285px;
+  flex: 1.15 1 290px;
 }
 
 .cockpit-panel.is-dragging-panel {
@@ -837,7 +838,12 @@ body {
   border-color: var(--accent-red);
 }
 
-/* MASTER VOLUME FADER */
+/* SCHLANKER SENKRECHTER MASTER-REGLER (CHANNEL STRIP) */
+.fader-card {
+  padding: 12px;
+  gap: 10px;
+}
+
 .fader-header {
   display: flex;
   justify-content: space-between;
@@ -845,56 +851,40 @@ body {
 }
 
 .fader-title {
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   font-weight: 800;
   letter-spacing: 0.05em;
 }
 
 .fader-subtitle {
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   margin-top: 2px;
 }
 
-.fader-readout {
-  font-size: 1.65rem;
-  font-weight: 900;
-  color: var(--accent-orange);
-  font-variant-numeric: tabular-nums;
-}
-
-/* SENKRECHTER MISCHPULT-FADER (OPTIMIERT FÜR IPAD & TOUCH) */
+/* SENKRECHTER MISCHPULT-FADER (UNTEREINANDER GESTAPELT FÜR SCHLANKE SPALTE) */
 .fader-console-layout {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 14px;
-  align-items: stretch;
-}
-
-@media (max-width: 420px) {
-  .fader-console-layout {
-    grid-template-columns: 1fr;
-  }
-  .vfader-unit {
-    justify-content: center;
-  }
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .vfader-unit {
   display: flex;
   align-items: stretch;
+  justify-content: center;
   gap: 10px;
   background: var(--bg-input);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  padding: 14px 12px;
+  padding: 12px 10px;
 }
 
 .vfader-track-area {
   display: flex;
   align-items: stretch;
   gap: 8px;
-  height: 236px;
+  height: 206px;
   touch-action: none; /* Verhindert Seiten-Scrollen beim Ziehen auf dem iPad! */
   cursor: ns-resize;
   outline: none;
@@ -1009,18 +999,15 @@ body {
 .vfader-side-panel {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
-/* TALKOVER / DUCKING BUTTON */
+/* TALKOVER / DUCKING BUTTON (KOMPAKT UNTER DEM FADER) */
 .btn-talkover {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 12px;
-  flex: 1;
-  padding: 14px;
+  gap: 6px;
+  padding: 10px 12px;
   border-radius: var(--radius-md);
   border: 2px solid var(--border-color);
   background: var(--bg-card);
@@ -1044,20 +1031,20 @@ body {
 }
 
 .talkover-icon {
-  font-size: 1.65rem;
+  font-size: 1.25rem;
 }
 
 .talkover-title {
   font-weight: 800;
-  font-size: 0.92rem;
-  line-height: 1.25;
+  font-size: 0.82rem;
+  line-height: 1.2;
 }
 
 .talkover-desc {
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
-  margin-top: 4px;
-  line-height: 1.3;
+  margin-top: 2px;
+  line-height: 1.25;
 }
 
 .talkover-badge {

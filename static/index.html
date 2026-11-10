@@ -174,14 +174,13 @@
       </div>
     </section>
 
-    <!-- ELEMENT 2: SENKRECHTER MASTER-REGLER & TALKOVER -->
+    <!-- ELEMENT 2: SCHLANKER SENKRECHTER MASTER-REGLER & TALKOVER -->
     <section class="cockpit-panel panel-fader" id="panelFader" data-panel-id="fader">
       <div class="panel-drag-handle" data-i18n-title="panel_drag_title" title="Gedrückt halten & ziehen zum Verschieben">
         <div class="drag-handle-left">
           <span class="drag-grip">⠿</span>
           <span class="panel-title-text" data-i18n="panel_fader_title">🎚️ MASTER-REGLER</span>
         </div>
-        <span class="drag-hint-pill" data-i18n="movable_pill">Verschiebbar</span>
       </div>
 
       <div class="fader-card cockpit-card-inner">
@@ -190,7 +189,6 @@
             <div class="fader-title" data-i18n="master_vol_title">MASTER LAUTSTÄRKE</div>
             <div class="fader-subtitle" id="effectiveVolInfo">Ausgangspegel: 85%</div>
           </div>
-          <div class="fader-readout" id="masterVolumeValue">85%</div>
         </div>
 
         <div class="fader-console-layout">
@@ -217,7 +215,6 @@
 
               <div class="vfader-slot" id="verticalFaderSlot">
                 <div class="vfader-rail">
-                  <div class="vfader-fill" id="verticalFaderFill" style="height: 85%;"></div>
                   <div class="vfader-effective-fill" id="verticalEffectiveFill" style="height: 85%;"></div>
                 </div>
                 <div class="vfader-thumb" id="verticalFaderThumb" style="bottom: 85%;">
@@ -236,7 +233,7 @@
             </div>
           </div>
 
-          <!-- RECHTE SPALTE NEBEN DEM FADER: TALKOVER & AUTOMATIK -->
+          <!-- UNTER DEM MASTER-REGLER: TALKOVER & AUTOMATIK -->
           <div class="vfader-side-panel">
             <button class="btn-talkover btn-talkover-tall" id="btnTalkover">
               <div class="talkover-top-row">
