@@ -22,6 +22,7 @@ import socket
 import sqlite3
 import struct
 import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -100,6 +101,175 @@ def get_local_ip() -> str:
             return s.getsockname()[0]
     except Exception:
         return "127.0.0.1"
+
+
+def _run_git(args: list[str], timeout: int = 12) -> subprocess.CompletedProcess:
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(BASE_DIR),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
+    )
+
+
+def get_local_git_info() -> dict:
+    """Liest schnell und rein lokal den aktuell installierten Git-Stand aus."""
+    if not (BASE_DIR / ".git").exists() or not shutil.which("git"):
+        return {"git_available": False}
+    try:
+        log_proc = _run_git(["log", "-1", "--format=%H|%h|%s|%ci", "HEAD"], timeout=4)
+        branch_proc = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=4)
+        branch = (branch_proc.stdout.strip() or "main") if branch_proc.returncode == 0 else "main"
+        if branch == "HEAD":
+            branch = "main"
+        if log_proc.returncode == 0 and "|" in log_proc.stdout:
+            full_hash, short_hash, subject, date_str = log_proc.stdout.strip().split("|", 3)
+            return {
+                "git_available": True,
+                "branch": branch,
+                "local_commit": full_hash,
+                "local_short": short_hash,
+                "local_subject": subject,
+                "local_date": date_str[:16],
+            }
+    except Exception:
+        pass
+    return {"git_available": False}
+
+
+def check_github_updates() -> dict:
+    """Prüft online auf GitHub (origin), ob neue Commits vorliegen."""
+    local_info = get_local_git_info()
+    if not local_info.get("git_available"):
+        return {
+            "ok": False,
+            "git_available": False,
+            "error": "Kein Git-Repository gefunden (Update-Prüfung erfordert eine Git-Installation).",
+        }
+
+    branch = local_info.get("branch", "main")
+    try:
+        fetch_proc = _run_git(["fetch", "origin", branch, "--quiet"], timeout=12)
+        if fetch_proc.returncode != 0:
+            return {
+                **local_info,
+                "ok": False,
+                "offline": True,
+                "error": "GitHub konnte nicht erreicht werden (bitte Internetverbindung prüfen).",
+            }
+
+        behind_proc = _run_git(["rev-list", "--count", f"HEAD..origin/{branch}"], timeout=5)
+        ahead_proc = _run_git(["rev-list", "--count", f"origin/{branch}..HEAD"], timeout=5)
+        remote_log = _run_git(["log", "-1", "--format=%H|%h|%s|%ci", f"origin/{branch}"], timeout=5)
+
+        commits_behind = int(behind_proc.stdout.strip() or "0") if behind_proc.returncode == 0 else 0
+        commits_ahead = int(ahead_proc.stdout.strip() or "0") if ahead_proc.returncode == 0 else 0
+
+        remote_commit = local_info["local_commit"]
+        remote_short = local_info["local_short"]
+        remote_subject = local_info["local_subject"]
+        remote_date = local_info["local_date"]
+        if remote_log.returncode == 0 and "|" in remote_log.stdout:
+            rc, rs, rsub, rdate = remote_log.stdout.strip().split("|", 3)
+            remote_commit, remote_short, remote_subject, remote_date = rc, rs, rsub, rdate[:16]
+
+        changelog: list[str] = []
+        if commits_behind > 0:
+            cl_proc = _run_git(
+                ["log", "--format=%h – %s", f"HEAD..origin/{branch}", "-n", "6"],
+                timeout=5,
+            )
+            if cl_proc.returncode == 0:
+                changelog = [line.strip() for line in cl_proc.stdout.splitlines() if line.strip()]
+
+        return {
+            **local_info,
+            "ok": True,
+            "remote_commit": remote_commit,
+            "remote_short": remote_short,
+            "remote_subject": remote_subject,
+            "remote_date": remote_date,
+            "commits_behind": commits_behind,
+            "commits_ahead": commits_ahead,
+            "update_available": commits_behind > 0,
+            "changelog": changelog,
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            **local_info,
+            "ok": False,
+            "offline": True,
+            "error": "Zeitüberschreitung bei der Verbindung zu GitHub (kein Internet in der Halle?).",
+        }
+    except Exception as e:
+        return {
+            **local_info,
+            "ok": False,
+            "error": f"Fehler bei der Update-Prüfung: {e}",
+        }
+
+
+def perform_github_update() -> dict:
+    """Lädt Änderungen von GitHub herunter, ohne data/ (MP3s & Datenbank) anzutasten."""
+    local_info = get_local_git_info()
+    if not local_info.get("git_available"):
+        return {
+            "ok": False,
+            "error": "Kein Git-Repository gefunden.",
+        }
+
+    branch = local_info.get("branch", "main")
+    try:
+        fetch_proc = _run_git(["fetch", "origin", branch, "--quiet"], timeout=15)
+        if fetch_proc.returncode != 0:
+            return {
+                "ok": False,
+                "error": "GitHub konnte zum Herunterladen nicht erreicht werden.",
+            }
+
+        diff_proc = _run_git(["diff", "--name-only", f"HEAD..origin/{branch}"], timeout=6)
+        changed_files = [
+            f.strip() for f in (diff_proc.stdout.splitlines() if diff_proc.returncode == 0 else []) if f.strip()
+        ]
+        if not changed_files:
+            return {
+                **local_info,
+                "ok": True,
+                "updated": False,
+                "restarting": False,
+                "message": "Bereits auf dem neuesten Stand.",
+            }
+
+        # Falls getrackte Code-Dateien lokal verändert wurden, sicher stashen (data/ bleibt völlig unberührt!)
+        status_proc = _run_git(["status", "--porcelain", "--untracked-files=no"], timeout=6)
+        if status_proc.returncode == 0 and status_proc.stdout.strip():
+            _run_git(["stash", "push", "-m", "arena-dj-auto-stash-before-update"], timeout=10)
+
+        pull_proc = _run_git(["pull", "--ff-only", "origin", branch], timeout=20)
+        if pull_proc.returncode != 0:
+            err_detail = (pull_proc.stderr or pull_proc.stdout or "").strip()
+            return {
+                "ok": False,
+                "error": f"Git-Update fehlgeschlagen: {err_detail or 'Fast-Forward nicht möglich.'}",
+            }
+
+        new_info = get_local_git_info()
+        needs_restart = any(f.endswith(".py") for f in changed_files)
+        return {
+            **new_info,
+            "ok": True,
+            "updated": True,
+            "restarting": needs_restart,
+            "changed_files": changed_files,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": f"Fehler beim Ausführen des Updates: {e}",
+        }
 
 
 def get_db() -> sqlite3.Connection:
@@ -619,6 +789,10 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             if not authed:
                 return self.send_json({"error": "Nicht autorisiert"}, 401)
             return self.handle_export()
+        if path == "/api/system/update-check":
+            if not authed:
+                return self.send_json({"error": "Nicht autorisiert"}, 401)
+            return self.send_json(check_github_updates())
         if path.startswith("/media/"):
             if not authed:
                 return self.send_json({"error": "Nicht autorisiert"}, 401)
@@ -797,6 +971,7 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                     "is_localhost": self.is_localhost_client(),
                 },
                 "player_status": PLAYER_ENGINE.get_status() if PLAYER_ENGINE else {"audio_available": False},
+                "system_version": get_local_git_info(),
             }
         )
 
@@ -857,6 +1032,9 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/import":
             return self.handle_import()
+
+        if path == "/api/system/update":
+            return self.handle_system_update()
 
         self.send_error(404, "Endpoint nicht gefunden")
 
@@ -1343,6 +1521,34 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             PLAYER_ENGINE.refresh_track_metadata(tracks)
         self.send_json({"ok": True})
 
+    def handle_system_update(self):
+        result = perform_github_update()
+        status_code = 200 if result.get("ok") else 400
+        self.send_json(result, status_code)
+
+        if result.get("ok") and result.get("restarting"):
+            server_ref = self.server
+
+            def _restart_process():
+                time.sleep(0.45)
+                try:
+                    if PLAYER_ENGINE:
+                        PLAYER_ENGINE.stop_immediate()
+                except Exception:
+                    pass
+                try:
+                    server_ref.server_close()
+                except Exception:
+                    pass
+                os.execv(sys.executable, [sys.executable, *sys.argv])
+
+            threading.Thread(target=_restart_process, daemon=True).start()
+
+
+class ReusableThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
 
 def run_server(port: int = 8080):
     global PLAYER_ENGINE
@@ -1354,7 +1560,7 @@ def run_server(port: int = 8080):
 
     token = settings.get("access_token", "")
     pin_hint = settings.get("auth_initial_pin_hint")
-    server = ThreadingHTTPServer(("0.0.0.0", port), ArenaDJRequestHandler)
+    server = ReusableThreadingHTTPServer(("0.0.0.0", port), ArenaDJRequestHandler)
     print("=" * 72)
     print("🎧 ARENA DJ SOUNDBOARD SERVER GESTARTET (ZUGRIFFSSCHUTZ & LIVE-MIXER)")
     print("=" * 72)

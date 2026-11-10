@@ -67,8 +67,8 @@
         <span>➕ <span class="hide-sm">MP3</span> Upload</span>
       </button>
 
-      <button class="btn btn-secondary" id="openSettingsBtn" title="QR-Code fürs iPad, Fade-Zeiten & Einstellungen">
-        <span>📱 QR / Setup</span>
+      <button class="btn btn-secondary" id="openSettingsBtn" title="Einstellungen, WLAN-Zugang & Software-Update">
+        <span>⚙️ Einstellungen</span>
       </button>
     </div>
   </header>
@@ -380,13 +380,13 @@
     </div>
   </div>
 
-  <!-- MODAL 3: EINSTELLUNGEN, KATEGORIEN & WLAN-ZUGRIFF -->
+  <!-- MODAL 3: EINSTELLUNGEN, KATEGORIEN, WLAN-ZUGRIFF & GITHUB-UPDATE -->
   <div class="modal-backdrop hidden" id="settingsModal">
     <div class="modal">
       <div class="modal-header">
         <div>
-          <h2>⚙️ Wettkampf-Setup & Geschützter iPad-Zugang</h2>
-          <p class="modal-subtitle">Zugriffsschutz per Token/Passwort, Fade-Zeiten, Durchsage-Pegel und Kategorien.</p>
+          <h2>⚙️ Einstellungen</h2>
+          <p class="modal-subtitle">WLAN-Zugang (QR / PIN), Überblend-Zeiten, Kategorien und Software-Update über GitHub.</p>
         </div>
         <button class="btn-close" id="closeSettingsBtn">✕</button>
       </div>
@@ -479,6 +479,29 @@
             <input type="text" id="newCatIcon" value="🎵" class="cat-icon-input" maxlength="4" />
             <input type="text" id="newCatName" placeholder="Neue Kategorie (z. B. Halbfinale)" />
             <button type="button" class="btn btn-secondary" id="addCatBtn">+ Hinzufügen</button>
+          </div>
+        </div>
+
+        <!-- SOFTWARE-UPDATE (GITHUB) -->
+        <div class="update-box">
+          <div class="update-header">
+            <span>🔄 Software-Update (GitHub)</span>
+            <span class="update-version-badge" id="currentVersionBadge">Version: –</span>
+          </div>
+          <div class="update-cur-sub" id="currentVersionDetails">
+            Prüfe bei Bedarf, ob auf GitHub eine neuere Version von ArenaDjSoundboard verfügbar ist. Deine Lieder, Highlights und Einstellungen bleiben beim Update vollständig erhalten.
+          </div>
+          <div class="update-actions-row">
+            <button type="button" class="btn btn-secondary" id="checkUpdateBtn">
+              🔍 Auf neue Version prüfen
+            </button>
+            <button type="button" class="btn btn-primary hidden" id="installUpdateBtn">
+              ⬇️ Jetzt direkt updaten
+            </button>
+          </div>
+          <div class="update-status-box hidden" id="updateStatusBox">
+            <div class="update-status-text" id="updateStatusText"></div>
+            <ul class="update-changelog hidden" id="updateChangelogList"></ul>
           </div>
         </div>
 

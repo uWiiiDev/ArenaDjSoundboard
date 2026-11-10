@@ -32,6 +32,12 @@ const state = {
     has_custom_password: false,
     is_localhost: false,
   },
+  systemVersion: {
+    git_available: false,
+    local_short: "",
+    local_date: "",
+    local_subject: "",
+  },
   activeCategory: "all",
   searchQuery: "",
   outputMode: localStorage.getItem("arena_dj_output_mode") || "server", // "server" | "local"
@@ -862,6 +868,9 @@ async function loadStateFromServer() {
   state.serverInfo = data.server_info || { lan_url: window.location.origin };
   if (data.auth_info) {
     state.authInfo = data.auth_info;
+  }
+  if (data.system_version) {
+    state.systemVersion = data.system_version;
   }
 
   if (data.settings) {
@@ -2345,6 +2354,176 @@ document.addEventListener("DOMContentLoaded", () => {
     el.style.color = isError ? "#fca5a5" : "#86efac";
   }
 
+  function renderUpdateVersionInfo() {
+    const badge = document.getElementById("currentVersionBadge");
+    const details = document.getElementById("currentVersionDetails");
+    if (!badge || !details) return;
+
+    if (state.systemVersion && state.systemVersion.git_available && state.systemVersion.local_short) {
+      badge.textContent = `Commit ${state.systemVersion.local_short}`;
+      details.textContent = `Installierter Stand: ${state.systemVersion.local_short} (${state.systemVersion.local_date || "lokal"}) – „${state.systemVersion.local_subject || ""}“. Lieder & Datenbank bleiben bei Updates unberührt.`;
+    } else {
+      badge.textContent = "Lokale Version";
+      details.textContent =
+        "Prüfe bei Bedarf, ob auf GitHub eine neuere Version verfügbar ist. Deine Lieder, Highlights und Einstellungen bleiben beim Update vollständig erhalten.";
+    }
+  }
+
+  const checkUpdateBtn = document.getElementById("checkUpdateBtn");
+  const installUpdateBtn = document.getElementById("installUpdateBtn");
+  const updateStatusBox = document.getElementById("updateStatusBox");
+  const updateStatusText = document.getElementById("updateStatusText");
+  const updateChangelogList = document.getElementById("updateChangelogList");
+
+  function setUpdateStatus(message, { isError = false, hasUpdate = false, changelog = [] } = {}) {
+    if (!updateStatusBox || !updateStatusText || !updateChangelogList) return;
+    if (!message) {
+      updateStatusBox.classList.add("hidden");
+      return;
+    }
+    updateStatusBox.classList.remove("hidden", "has-update", "is-error");
+    if (hasUpdate) updateStatusBox.classList.add("has-update");
+    if (isError) updateStatusBox.classList.add("is-error");
+    updateStatusText.textContent = message;
+
+    if (changelog && changelog.length > 0) {
+      updateChangelogList.innerHTML = changelog
+        .map((entry) => `<li>${escapeHtml(entry)}</li>`)
+        .join("");
+      updateChangelogList.classList.remove("hidden");
+    } else {
+      updateChangelogList.innerHTML = "";
+      updateChangelogList.classList.add("hidden");
+    }
+  }
+
+  async function waitForServerAndReload() {
+    for (let attempt = 0; attempt < 25; attempt++) {
+      await new Promise((r) => setTimeout(r, 650));
+      try {
+        const probe = await fetch(`/api/state?t=${Date.now()}`, { cache: "no-store" });
+        if (probe.ok || probe.status === 401) {
+          state.manualStopOrFade = true;
+          window.location.reload();
+          return;
+        }
+      } catch (_) {
+        // Server startet noch neu – kurz weiter warten
+      }
+    }
+    state.manualStopOrFade = true;
+    window.location.reload();
+  }
+
+  if (checkUpdateBtn) {
+    checkUpdateBtn.addEventListener("click", async () => {
+      checkUpdateBtn.disabled = true;
+      checkUpdateBtn.textContent = "⏳ Prüfe auf GitHub...";
+      installUpdateBtn.classList.add("hidden");
+      setUpdateStatus("Verbinde mit GitHub und prüfe auf neue Version...");
+
+      try {
+        const res = await fetch("/api/system/update-check", { cache: "no-store" });
+        const info = await res.json();
+
+        if (info.local_short) {
+          state.systemVersion = info;
+          renderUpdateVersionInfo();
+        }
+
+        if (!res.ok || !info.ok) {
+          setUpdateStatus(
+            `⚠️ ${info.error || "Update-Prüfung fehlgeschlagen."}`,
+            { isError: true }
+          );
+          return;
+        }
+
+        if (info.update_available) {
+          const count = info.commits_behind || 1;
+          setUpdateStatus(
+            `🚀 Neue Version auf GitHub verfügbar! (${count} ${
+              count === 1 ? "Änderung" : "Änderungen"
+            } – neuester Stand: ${info.remote_short})`,
+            { hasUpdate: true, changelog: info.changelog || [] }
+          );
+          installUpdateBtn.classList.remove("hidden");
+        } else {
+          setUpdateStatus(
+            `✅ Du nutzt bereits die aktuellste Version (${info.local_short}).`
+          );
+        }
+      } catch (err) {
+        setUpdateStatus(
+          `⚠️ Fehler bei der Verbindung zum Server: ${err.message}`,
+          { isError: true }
+        );
+      } finally {
+        checkUpdateBtn.disabled = false;
+        checkUpdateBtn.textContent = "🔍 Auf neue Version prüfen";
+      }
+    });
+  }
+
+  if (installUpdateBtn) {
+    installUpdateBtn.addEventListener("click", async () => {
+      if (
+        state.isPlaying &&
+        !confirm(
+          "Hinweis: Es läuft gerade Musik. Falls beim Update Server-Dateien erneuert werden, startet der Server für ca. 1–2 Sekunden neu. Jetzt direkt updaten?"
+        )
+      ) {
+        return;
+      }
+
+      installUpdateBtn.disabled = true;
+      checkUpdateBtn.disabled = true;
+      installUpdateBtn.textContent = "⏳ Update läuft...";
+      setUpdateStatus("⏳ Lade neue Version von GitHub herunter und installiere Update...");
+
+      try {
+        const res = await fetch("/api/system/update", { method: "POST" });
+        const result = await res.json();
+
+        if (!res.ok || !result.ok) {
+          setUpdateStatus(
+            `⚠️ ${result.error || "Update konnte nicht installiert werden."}`,
+            { isError: true }
+          );
+          installUpdateBtn.disabled = false;
+          checkUpdateBtn.disabled = false;
+          installUpdateBtn.textContent = "⬇️ Jetzt direkt updaten";
+          return;
+        }
+
+        installUpdateBtn.classList.add("hidden");
+        if (result.restarting) {
+          setUpdateStatus(
+            `✅ Auf Version ${result.local_short || "neu"} aktualisiert! Server startet kurz neu – Oberfläche lädt automatisch neu...`,
+            { hasUpdate: true }
+          );
+          await waitForServerAndReload();
+        } else {
+          setUpdateStatus(
+            `✅ Update installiert (${result.local_short || "aktuell"})! Oberfläche wird neu geladen...`,
+            { hasUpdate: true }
+          );
+          setTimeout(() => {
+            state.manualStopOrFade = true;
+            window.location.reload();
+          }, 700);
+        }
+      } catch (_) {
+        // Falls der Server extrem schnell neu gestartet ist, bevor der Browser fertig gelesen hat:
+        setUpdateStatus(
+          "🔄 Server startet neu – Oberfläche wird gleich automatisch neu geladen...",
+          { hasUpdate: true }
+        );
+        await waitForServerAndReload();
+      }
+    });
+  }
+
   document.getElementById("openSettingsBtn").addEventListener("click", () => {
     document.getElementById("setFadeIn").value = state.settings.fade_in_duration;
     document.getElementById("setFadeOut").value = state.settings.fade_out_duration;
@@ -2355,6 +2534,7 @@ document.addEventListener("DOMContentLoaded", () => {
     showSecFeedback("");
     renderSecuritySection();
     renderSettingsCategories();
+    renderUpdateVersionInfo();
     settingsModal.classList.remove("hidden");
   });
 
