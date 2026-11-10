@@ -77,7 +77,20 @@ cd ArenaDjSoundboard
 
 *(Or run `python3 server.py` directly. Set `PORT=8080` to customize the port.)*
 
-On first startup, the server initializes `data/arena_dj.db` (excluded from Git), prints the local URL, the protected Wi-Fi URL, a secret iPad magic link, and an initial 6-digit PIN:
+### Build & Install as a Debian / Ubuntu `.deb` Package
+
+You can build a native `.deb` package complete with application menu icon (`Arena DJ Soundboard`), automatic dependency resolution, and optional `systemd --user` background service:
+
+```bash
+./build_deb.sh
+sudo apt install ./dist/arena-dj-soundboard_1.0.0_all.deb
+```
+
+After installation:
+* Launch **Arena DJ Soundboard** directly from your desktop application menu (Audio & Video), or run `arena-dj` (`arena-dj --status`, `arena-dj --stop`).
+* Uploaded tracks and database settings are stored persistently in `~/.local/share/arena-dj-soundboard/`.
+
+On first startup, the server initializes its SQLite database, prints the local URL, the protected Wi-Fi URL, a secret iPad magic link, and an initial 6-digit PIN:
 
 1. Open `http://localhost:8080` on the host computer.
 2. Click **`➕ MP3 Upload`** to add your own competition tracks (`.mp3`, `.wav`, `.m4a`, `.ogg`, `.flac`).

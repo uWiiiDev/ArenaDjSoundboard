@@ -1,0 +1,12 @@
+[Unit]
+Description=Arena DJ Soundboard – Live Competition Audio Server
+After=pipewire.service pulseaudio.service sound.target network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/arena-dj --foreground
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

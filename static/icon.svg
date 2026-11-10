@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#192744" />
+      <stop offset="55%" stop-color="#0e1628" />
+      <stop offset="100%" stop-color="#070b14" />
+    </linearGradient>
+    <radialGradient id="glowOrange" cx="50%" cy="54%" r="48%">
+      <stop offset="0%" stop-color="#f97316" stop-opacity="0.32" />
+      <stop offset="65%" stop-color="#38bdf8" stop-opacity="0.1" />
+      <stop offset="100%" stop-color="#070b14" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="archGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#f8fafc" />
+      <stop offset="100%" stop-color="#f97316" />
+    </linearGradient>
+    <linearGradient id="barOrange" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#ea580c" />
+      <stop offset="100%" stop-color="#fb923c" />
+    </linearGradient>
+    <linearGradient id="barCyan" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+    <linearGradient id="barCenter" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#22c55e" />
+      <stop offset="52%" stop-color="#f97316" />
+      <stop offset="100%" stop-color="#fde047" />
+    </linearGradient>
+  </defs>
+
+  <!-- App Squircle Background -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bgGrad)" stroke="#2c3e63" stroke-width="10" />
+  <circle cx="256" cy="272" r="215" fill="url(#glowOrange)" />
+
+  <!-- DJ Headphone Band -->
+  <path
+    d="M 102 266 C 102 152, 168 88, 256 88 C 344 88, 410 152, 410 266"
+    fill="none"
+    stroke="url(#archGrad)"
+    stroke-width="28"
+    stroke-linecap="round"
+  />
+
+  <!-- Headphone Ear Cups -->
+  <rect x="70" y="232" width="54" height="122" rx="27" fill="#38bdf8" />
+  <rect x="83" y="248" width="28" height="90" rx="14" fill="#0b1120" opacity="0.55" />
+
+  <rect x="388" y="232" width="54" height="122" rx="27" fill="#f97316" />
+  <rect x="401" y="248" width="28" height="90" rx="14" fill="#0b1120" opacity="0.55" />
+
+  <!-- Vinyl / Turntable Platter -->
+  <circle cx="256" cy="292" r="122" fill="#090e1a" stroke="#33476e" stroke-width="8" />
+  <circle cx="256" cy="292" r="101" fill="none" stroke="#1e293b" stroke-width="3" stroke-dasharray="16 11" />
+
+  <!-- Soundboard Waveform / Equalizer Bars -->
+  <rect x="172" y="264" width="22" height="56" rx="11" fill="url(#barCyan)" />
+  <rect x="207" y="232" width="22" height="120" rx="11" fill="url(#barCyan)" />
+  <rect x="245" y="202" width="22" height="180" rx="11" fill="url(#barCenter)" />
+  <rect x="283" y="226" width="22" height="132" rx="11" fill="url(#barOrange)" />
+  <rect x="318" y="258" width="22" height="68" rx="11" fill="url(#barOrange)" />
+
+  <!-- Live ON-AIR Status LED (Top Right Corner, crisp clearance) -->
+  <circle cx="418" cy="94" r="22" fill="#0b1120" />
+  <circle cx="418" cy="94" r="14" fill="#22c55e" />
+  <circle cx="418" cy="94" r="21" fill="none" stroke="#22c55e" stroke-width="3.5" opacity="0.55" />
+</svg>

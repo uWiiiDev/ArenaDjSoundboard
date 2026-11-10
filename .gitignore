@@ -12,8 +12,10 @@ data/
 *.flac
 *.aac
 
-# Backup exports
+# Backup exports & built Debian packages
 arena_dj_backup*.json
+dist/
+*.deb
 
 # Python cache & virtual environments
 __pycache__/

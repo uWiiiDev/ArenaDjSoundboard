@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# Arena DJ Soundboard – Desktop & CLI Launcher
+set -euo pipefail
+
+PORT="${PORT:-8080}"
+DATA_DIR="${ARENA_DJ_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/arena-dj-soundboard}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/arena-dj-soundboard"
+PID_FILE="$STATE_DIR/server.pid"
+LOG_FILE="$STATE_DIR/server.log"
+
+SYS_APP_DIR="/usr/share/arena-dj-soundboard"
+OVERRIDE_APP_DIR="$DATA_DIR/app_override"
+
+mkdir -p "$DATA_DIR" "$STATE_DIR"
+
+# Neuesten App-Pfad wählen (falls über die Web-Oberfläche ein GitHub-Update installiert wurde)
+SERVER_PY="$SYS_APP_DIR/server.py"
+if [ -f "$OVERRIDE_APP_DIR/server.py" ]; then
+  SERVER_PY="$OVERRIDE_APP_DIR/server.py"
+fi
+
+is_port_listening() {
+  python3 - "$PORT" <<'EOF'
+import socket, sys
+port = int(sys.argv[1])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.settimeout(0.25)
+    sys.exit(0 if s.connect_ex(("127.0.0.1", port)) == 0 else 1)
+EOF
+}
+
+open_browser() {
+  local url="http://localhost:${PORT}"
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$url" >/dev/null 2>&1 &
+  elif command -v sensible-browser >/dev/null 2>&1; then
+    sensible-browser "$url" >/dev/null 2>&1 &
+  else
+    echo "Bitte im Browser öffnen: $url"
+  fi
+}
+
+stop_server() {
+  local stopped=0
+  if [ -f "$PID_FILE" ]; then
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      stopped=1
+    fi
+    rm -f "$PID_FILE"
+  fi
+  # Sicherheits-Fallback, falls ohne PID-Datei gestartet
+  if is_port_listening; then
+    pkill -f "arena-dj-soundboard.*/server.py" 2>/dev/null || true
+    stopped=1
+  fi
+  if [ "$stopped" -eq 1 ]; then
+    echo "Arena DJ Soundboard Server wurde beendet."
+  else
+    echo "Arena DJ Soundboard Server lief nicht."
+  fi
+}
+
+MODE="${1:---open}"
+
+case "$MODE" in
+  --foreground|-f)
+    export PORT ARENA_DJ_DATA_DIR="$DATA_DIR"
+    exec python3 "$SERVER_PY"
+    ;;
+  --stop)
+    stop_server
+    ;;
+  --status)
+    if is_port_listening; then
+      echo "✅ Arena DJ Soundboard läuft auf http://localhost:${PORT}"
+      echo "📂 Musik & Datenbank: $DATA_DIR"
+      echo "📄 Server-Log:        $LOG_FILE"
+    else
+      echo "⏹ Arena DJ Soundboard ist aktuell gestoppt."
+    fi
+    ;;
+  --help|-h)
+    cat <<EOF
+Arena DJ Soundboard – Steuerung
+
+Verwendung:
+  arena-dj               Startet den Server (falls noch nicht aktiv) und öffnet den Browser
+  arena-dj --foreground  Startet den Server direkt im Vordergrund (z. B. für systemd)
+  arena-dj --stop        Beendet den laufenden Hintergrund-Server
+  arena-dj --status      Zeigt an, ob der Server läuft
+EOF
+    ;;
+  --open|*)
+    if ! is_port_listening; then
+      export PORT ARENA_DJ_DATA_DIR="$DATA_DIR"
+      nohup python3 "$SERVER_PY" >>"$LOG_FILE" 2>&1 &
+      echo $! >"$PID_FILE"
+
+      # Kurz warten, bis der HTTP-Server bereit ist (typisch < 150ms)
+      for _ in $(seq 1 35); do
+        if is_port_listening; then
+          break
+        fi
+        sleep 0.1
+      done
+    fi
+    open_browser
+    ;;
+esac

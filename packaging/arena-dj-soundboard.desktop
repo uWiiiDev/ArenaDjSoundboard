@@ -1,0 +1,23 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Arena DJ Soundboard
+GenericName=Competition DJ Soundboard
+GenericName[de]=Wettkampf-DJ-Soundboard
+GenericName[fr]=Soundboard DJ de compétition
+Comment=Live competition DJ soundboard, waveform cue points, and dual-deck mixer
+Comment[de]=Live-Wettkampf-Soundboard mit Highlights, Crossfade und WLAN-Steuerung
+Comment[fr]=Régie musicale live avec moments forts, fondu enchaîné et contrôle Wi-Fi
+Exec=/usr/bin/arena-dj
+Icon=arena-dj-soundboard
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;Player;
+Keywords=DJ;Soundboard;Arena;Music;Mixer;Sport;MP3;
+StartupNotify=true
+Actions=StopServer;
+
+[Desktop Action StopServer]
+Name=Stop Background Server
+Name[de]=Hintergrund-Server beenden
+Name[fr]=Arrêter le serveur en arrière-plan
+Exec=/usr/bin/arena-dj --stop

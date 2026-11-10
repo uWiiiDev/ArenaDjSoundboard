@@ -11,6 +11,7 @@ from email.policy import default as default_email_policy
 import hashlib
 import hmac
 from http.cookies import SimpleCookie
+import io
 import json
 import math
 import mimetypes
@@ -23,9 +24,11 @@ import sqlite3
 import struct
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import urllib.parse
+import urllib.request
 import uuid
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -83,14 +86,41 @@ def clear_failed_logins(ip: str):
     with _LOGIN_LOCK:
         _FAILED_LOGINS.pop(ip, None)
 
+GITHUB_REPO = "uWiiiDev/ArenaDjSoundboard"
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+
+
+def _resolve_data_dir() -> Path:
+    """
+    Nutzt im Entwicklungs-/Git-Ordner weiterhin ./data,
+    und bei einer System-/DEB-Installation (/usr/share/...) automatisch
+    ~/.local/share/arena-dj-soundboard, damit Lieder & SQLite-Datenbank
+    dauerhaft im Benutzerordner gespeichert bleiben.
+    """
+    env_dir = os.environ.get("ARENA_DJ_DATA_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+
+    if (
+        str(BASE_DIR).startswith(("/usr/", "/opt/"))
+        or "app_override" in BASE_DIR.parts
+        or not os.access(BASE_DIR, os.W_OK)
+    ):
+        xdg_data = os.environ.get("XDG_DATA_HOME", "").strip()
+        base_user = Path(xdg_data).expanduser() if xdg_data else (Path.home() / ".local" / "share")
+        return (base_user / "arena-dj-soundboard").resolve()
+
+    return BASE_DIR / "data"
+
+
+DATA_DIR = _resolve_data_dir()
 UPLOADS_DIR = DATA_DIR / "uploads"
 DB_PATH = DATA_DIR / "arena_dj.db"
 STATIC_DIR = BASE_DIR / "static"
 
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-STATIC_DIR.mkdir(parents=True, exist_ok=True)
+if not STATIC_DIR.exists() and os.access(BASE_DIR, os.W_OK):
+    STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def get_local_ip() -> str:
@@ -116,41 +146,135 @@ def _run_git(args: list[str], timeout: int = 12) -> subprocess.CompletedProcess:
 
 
 def get_local_git_info() -> dict:
-    """Liest schnell und rein lokal den aktuell installierten Git-Stand aus."""
-    if not (BASE_DIR / ".git").exists() or not shutil.which("git"):
-        return {"git_available": False}
-    try:
-        log_proc = _run_git(["log", "-1", "--format=%H|%h|%s|%ci", "HEAD"], timeout=4)
-        branch_proc = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=4)
-        branch = (branch_proc.stdout.strip() or "main") if branch_proc.returncode == 0 else "main"
-        if branch == "HEAD":
-            branch = "main"
-        if log_proc.returncode == 0 and "|" in log_proc.stdout:
-            full_hash, short_hash, subject, date_str = log_proc.stdout.strip().split("|", 3)
+    """Liest schnell und rein lokal den aktuell installierten Git- oder Paket-Stand aus."""
+    if (BASE_DIR / ".git").exists() and shutil.which("git"):
+        try:
+            log_proc = _run_git(["log", "-1", "--format=%H|%h|%s|%ci", "HEAD"], timeout=4)
+            branch_proc = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=4)
+            branch = (branch_proc.stdout.strip() or "main") if branch_proc.returncode == 0 else "main"
+            if branch == "HEAD":
+                branch = "main"
+            if log_proc.returncode == 0 and "|" in log_proc.stdout:
+                full_hash, short_hash, subject, date_str = log_proc.stdout.strip().split("|", 3)
+                return {
+                    "git_available": True,
+                    "install_mode": "git",
+                    "branch": branch,
+                    "local_commit": full_hash,
+                    "local_short": short_hash,
+                    "local_subject": subject,
+                    "local_date": date_str[:16],
+                }
+        except Exception:
+            pass
+
+    build_info_file = BASE_DIR / "BUILD_INFO.json"
+    if build_info_file.is_file():
+        try:
+            info = json.loads(build_info_file.read_text(encoding="utf-8"))
             return {
                 "git_available": True,
-                "branch": branch,
-                "local_commit": full_hash,
-                "local_short": short_hash,
-                "local_subject": subject,
-                "local_date": date_str[:16],
+                "install_mode": "deb",
+                "branch": info.get("branch", "main"),
+                "local_commit": info.get("commit", ""),
+                "local_short": info.get("short", info.get("version", "deb")),
+                "local_subject": info.get("subject", f"Arena DJ {info.get('version', '1.0.0')}"),
+                "local_date": info.get("date", ""),
             }
-    except Exception:
-        pass
+        except Exception:
+            pass
+
     return {"git_available": False}
 
 
+def _github_api_get_json(url: str, timeout: int = 10) -> dict | list:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "ArenaDjSoundboard-Updater/1.0",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def check_github_updates() -> dict:
-    """Prüft online auf GitHub (origin), ob neue Commits vorliegen."""
+    """Prüft online auf GitHub (per Git oder HTTPS-API bei .deb-Installation), ob Updates vorliegen."""
     local_info = get_local_git_info()
     if not local_info.get("git_available"):
         return {
             "ok": False,
             "git_available": False,
-            "error": "Kein Git-Repository gefunden (Update-Prüfung erfordert eine Git-Installation).",
+            "error": "Keine Versionsinformationen gefunden.",
         }
 
     branch = local_info.get("branch", "main")
+
+    # Modus A: .deb-Paketinstallation ohne .git -> Prüfung direkt über die GitHub HTTPS-API
+    if local_info.get("install_mode") == "deb":
+        try:
+            commits_data = _github_api_get_json(
+                f"https://api.github.com/repos/{GITHUB_REPO}/commits?sha={branch}&per_page=8",
+                timeout=10,
+            )
+            if not isinstance(commits_data, list) or not commits_data:
+                return {**local_info, "ok": False, "error": "Unerwartete Antwort von GitHub."}
+
+            latest = commits_data[0]
+            remote_commit = latest.get("sha", "")
+            remote_short = remote_commit[:7]
+            commit_obj = latest.get("commit") or {}
+            remote_subject = (commit_obj.get("message") or "").splitlines()[0]
+            remote_date = ((commit_obj.get("committer") or {}).get("date") or "")[:16].replace("T", " ")
+
+            local_commit = local_info.get("local_commit", "")
+            if remote_commit == local_commit or (local_commit and remote_commit.startswith(local_commit)):
+                return {
+                    **local_info,
+                    "ok": True,
+                    "remote_commit": remote_commit,
+                    "remote_short": remote_short,
+                    "remote_subject": remote_subject,
+                    "remote_date": remote_date,
+                    "commits_behind": 0,
+                    "commits_ahead": 0,
+                    "update_available": False,
+                    "changelog": [],
+                }
+
+            changelog: list[str] = []
+            commits_behind = 0
+            for item in commits_data:
+                sha = item.get("sha", "")
+                if local_commit and (sha == local_commit or sha.startswith(local_commit)):
+                    break
+                commits_behind += 1
+                msg_first = ((item.get("commit") or {}).get("message") or "").splitlines()[0]
+                if len(changelog) < 6:
+                    changelog.append(f"{sha[:7]} – {msg_first}")
+
+            return {
+                **local_info,
+                "ok": True,
+                "remote_commit": remote_commit,
+                "remote_short": remote_short,
+                "remote_subject": remote_subject,
+                "remote_date": remote_date,
+                "commits_behind": max(1, commits_behind),
+                "commits_ahead": 0,
+                "update_available": True,
+                "changelog": changelog,
+            }
+        except Exception:
+            return {
+                **local_info,
+                "ok": False,
+                "offline": True,
+                "error": "GitHub konnte nicht erreicht werden (bitte Internetverbindung prüfen).",
+            }
+
+    # Modus B: Klassisches Git-Repository
     try:
         fetch_proc = _run_git(["fetch", "origin", branch, "--quiet"], timeout=12)
         if fetch_proc.returncode != 0:
@@ -176,7 +300,7 @@ def check_github_updates() -> dict:
             rc, rs, rsub, rdate = remote_log.stdout.strip().split("|", 3)
             remote_commit, remote_short, remote_subject, remote_date = rc, rs, rsub, rdate[:16]
 
-        changelog: list[str] = []
+        changelog = []
         if commits_behind > 0:
             cl_proc = _run_git(
                 ["log", "--format=%h – %s", f"HEAD..origin/{branch}", "-n", "6"],
@@ -218,10 +342,84 @@ def perform_github_update() -> dict:
     if not local_info.get("git_available"):
         return {
             "ok": False,
-            "error": "Kein Git-Repository gefunden.",
+            "error": "Keine Versionsinformationen gefunden.",
         }
 
     branch = local_info.get("branch", "main")
+
+    # Modus A: .deb-Installation -> Update im Benutzerverzeichnis (app_override) ohne Root-Zwang!
+    if local_info.get("install_mode") == "deb":
+        try:
+            check = check_github_updates()
+            if not check.get("ok"):
+                return {"ok": False, "error": check.get("error", "GitHub nicht erreichbar.")}
+            if not check.get("update_available"):
+                return {
+                    **local_info,
+                    "ok": True,
+                    "updated": False,
+                    "restarting": False,
+                    "message": "Bereits auf dem neuesten Stand.",
+                }
+
+            tar_url = f"https://codeload.github.com/{GITHUB_REPO}/tar.gz/refs/heads/{branch}"
+            req = urllib.request.Request(tar_url, headers={"User-Agent": "ArenaDjSoundboard-Updater/1.0"})
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                tar_bytes = resp.read()
+
+            override_dir = DATA_DIR / "app_override"
+            staging_dir = DATA_DIR / "app_override_staging"
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir)
+            staging_dir.mkdir(parents=True, exist_ok=True)
+
+            with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:gz") as tf:
+                for member in tf.getmembers():
+                    parts = Path(member.name).parts
+                    if len(parts) <= 1:
+                        continue
+                    rel_path = Path(*parts[1:])
+                    if ".." in rel_path.parts or rel_path.parts[0] == "data":
+                        continue
+                    dest = staging_dir / rel_path
+                    if member.isdir():
+                        dest.mkdir(parents=True, exist_ok=True)
+                    elif member.isfile():
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        f_obj = tf.extractfile(member)
+                        if f_obj:
+                            dest.write_bytes(f_obj.read())
+
+            new_build_info = {
+                "version": "github-main",
+                "branch": branch,
+                "commit": check["remote_commit"],
+                "short": check["remote_short"],
+                "subject": check["remote_subject"],
+                "date": check["remote_date"],
+                "updated_at": int(time.time()),
+            }
+            (staging_dir / "BUILD_INFO.json").write_text(
+                json.dumps(new_build_info, indent=2), encoding="utf-8"
+            )
+
+            if override_dir.exists():
+                shutil.rmtree(override_dir)
+            staging_dir.rename(override_dir)
+
+            return {
+                "ok": True,
+                "updated": True,
+                "restarting": True,
+                "local_short": check["remote_short"],
+                "local_subject": check["remote_subject"],
+                "local_date": check["remote_date"],
+                "exec_script": str(override_dir / "server.py"),
+            }
+        except Exception as e:
+            return {"ok": False, "error": f"Fehler beim Paket-Update: {e}"}
+
+    # Modus B: Klassisches Git-Repository
     try:
         fetch_proc = _run_git(["fetch", "origin", branch, "--quiet"], timeout=15)
         if fetch_proc.returncode != 0:
@@ -800,8 +998,17 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             filename = urllib.parse.unquote(path[len("/media/") :])
             return self.serve_media_with_range(filename)
 
-        # Nicht eingeloggt -> Login-Sperrbildschirm anzeigen
-        if not authed:
+        public_icon_paths = {
+            "/icon.svg",
+            "/favicon.ico",
+            "/apple-touch-icon.png",
+            "/icon-192.png",
+            "/icon-512.png",
+            "/manifest.webmanifest",
+        }
+
+        # Nicht eingeloggt -> Login-Sperrbildschirm anzeigen (Icons bleiben öffentlich ladbar)
+        if not authed and path not in public_icon_paths:
             login_file = STATIC_DIR / "login.html"
             lang = settings.get("language", "de")
             if lang not in ("de", "en", "fr"):
@@ -1535,6 +1742,7 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
 
         if result.get("ok") and result.get("restarting"):
             server_ref = self.server
+            target_script = result.get("exec_script") or sys.argv[0]
 
             def _restart_process():
                 time.sleep(0.45)
@@ -1547,7 +1755,7 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                     server_ref.server_close()
                 except Exception:
                     pass
-                os.execv(sys.executable, [sys.executable, *sys.argv])
+                os.execv(sys.executable, [sys.executable, target_script, *sys.argv[1:]])
 
             threading.Thread(target=_restart_process, daemon=True).start()
 
