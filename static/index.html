@@ -49,15 +49,6 @@
         </button>
       </div>
 
-      <div class="view-switcher" role="group" aria-label="Ansicht wählen">
-        <button type="button" class="view-switch-btn active" id="viewGridBtn" title="Große Kachel-Ansicht">
-          ▦ <span class="hide-xs">Kacheln</span>
-        </button>
-        <button type="button" class="view-switch-btn" id="viewListBtn" title="Kompakte Listen-Ansicht (mehr Titel pro Seite)">
-          ☰ <span class="hide-xs">Liste</span>
-        </button>
-      </div>
-
       <div class="search-box">
         <span class="search-icon">🔍</span>
         <input type="search" id="searchInput" placeholder="Lied / Highlight suchen..." />
@@ -104,8 +95,36 @@
           >
             <option value="all">🏆 Alle Lieder</option>
           </select>
-          <button type="button" class="btn-follow-pill active" id="autoFollowBtn" title="Liste läuft bei Liedwechsel automatisch zum aktiven Titel mit">
-            🎯 Auto-Mitlauf
+
+          <div class="view-switcher panel-view-switcher" role="group" aria-label="Ansicht wählen">
+            <button
+              type="button"
+              class="view-switch-btn active"
+              id="viewGridBtn"
+              title="Kachel-Ansicht"
+              aria-label="Kachel-Ansicht"
+            >
+              ▦
+            </button>
+            <button
+              type="button"
+              class="view-switch-btn"
+              id="viewListBtn"
+              title="Listen-Ansicht"
+              aria-label="Listen-Ansicht"
+            >
+              ☰
+            </button>
+          </div>
+
+          <button
+            type="button"
+            class="btn-follow-pill active"
+            id="autoFollowBtn"
+            title="Auto-Mitlauf aktiv: Liste läuft bei Liedwechsel automatisch zum aktiven Titel mit"
+            aria-label="Auto-Mitlauf"
+          >
+            🎯
           </button>
         </div>
       </div>

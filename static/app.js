@@ -1139,11 +1139,12 @@ function renderSoundboard() {
                 type="button"
                 class="btn-loop-toggle ${track.loop ? "active" : ""}"
                 data-toggle-loop="${track.id}"
-                title="Als Endlosschleife markieren (Ein/Aus)"
+                title="${track.loop ? "Endlosschleife aktiv (Ein/Aus)" : "Als Endlosschleife markieren (Ein/Aus)"}"
+                aria-label="Endlosschleife"
               >
-                🔁 ${track.loop ? "Endlos" : "Loop"}
+                🔁
               </button>
-              <button type="button" class="btn-edit-cues" data-edit-track="${track.id}" title="Highlights & Wellenform bearbeiten">
+              <button type="button" class="btn-edit-cues" data-edit-track="${track.id}" title="Highlights & Wellenform bearbeiten" aria-label="Highlights bearbeiten">
                 ✂️
               </button>
             </div>
@@ -1214,11 +1215,12 @@ function renderSoundboard() {
                   type="button"
                   class="btn-loop-toggle ${track.loop ? "active" : ""}"
                   data-toggle-loop="${track.id}"
-                  title="Als Endlosschleife markieren (Ein/Aus)"
+                  title="${track.loop ? "Endlosschleife aktiv (Ein/Aus)" : "Als Endlosschleife markieren (Ein/Aus)"}"
+                  aria-label="Endlosschleife"
                 >
-                  🔁 ${track.loop ? "Endlos" : "Loop"}
+                  🔁
                 </button>
-                <button type="button" class="btn-edit-cues" data-edit-track="${track.id}">
+                <button type="button" class="btn-edit-cues" data-edit-track="${track.id}" title="Highlights & Wellenform bearbeiten" aria-label="Highlights bearbeiten">
                   ✂️
                 </button>
               </div>
@@ -1841,16 +1843,16 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Auto-Follow-Button in der Liederliste
+  // Auto-Follow-Button in der Liederliste (nur Symbol, ohne Textbeschriftung)
   const autoFollowBtn = document.getElementById("autoFollowBtn");
   if (autoFollowBtn) {
     autoFollowBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       state.autoFollowEnabled = !state.autoFollowEnabled;
       autoFollowBtn.classList.toggle("active", state.autoFollowEnabled);
-      autoFollowBtn.textContent = state.autoFollowEnabled
-        ? "🎯 Auto-Mitlauf"
-        : "✋ Manuell scrollen";
+      autoFollowBtn.title = state.autoFollowEnabled
+        ? "Auto-Mitlauf aktiv: Liste läuft bei Liedwechsel automatisch zum aktiven Titel mit"
+        : "Auto-Mitlauf deaktiviert (manuelles Scrollen)";
       if (state.autoFollowEnabled) {
         scrollActiveTrackIntoView(true);
       }
