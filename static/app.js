@@ -1067,7 +1067,7 @@ function renderSoundboard() {
       <div class="track-card" style="grid-column: 1 / -1; text-align: center; padding: 36px;">
         <h3>Keine Lieder in dieser Ansicht gefunden</h3>
         <p style="color: var(--text-muted); margin-top: 6px;">
-          Lade eigene MP3-Dateien über <strong>„➕ MP3 hochladen“</strong> hoch oder wechsle die Kategorie.
+          Ziehe MP3-Dateien einfach per Drag &amp; Drop hierher oder nutze den Upload-Button oben rechts.
         </p>
       </div>
     `;

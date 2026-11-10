@@ -163,10 +163,13 @@ body {
   width: var(--header-ctrl-h);
   height: var(--header-ctrl-h);
   padding: 0;
+}
+
+.top-actions .btn-secondary.btn-icon-only {
   color: var(--text-muted);
 }
 
-.top-actions .btn.btn-icon-only:hover {
+.top-actions .btn-secondary.btn-icon-only:hover {
   color: var(--text-main);
   border-color: var(--accent-blue);
 }
