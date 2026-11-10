@@ -1140,7 +1140,7 @@ function renderSoundboard() {
                 🔁 ${track.loop ? "Endlos" : "Loop"}
               </button>
               <button type="button" class="btn-edit-cues" data-edit-track="${track.id}" title="Highlights & Wellenform bearbeiten">
-                ✂️${cues.length > 0 ? ` (${cues.length})` : ""}
+                ✂️
               </button>
             </div>
           </div>
@@ -1215,7 +1215,7 @@ function renderSoundboard() {
                   🔁 ${track.loop ? "Endlos" : "Loop"}
                 </button>
                 <button type="button" class="btn-edit-cues" data-edit-track="${track.id}">
-                  ✂️${cues.length > 0 ? ` (${cues.length})` : ""}
+                  ✂️
                 </button>
               </div>
             </div>
