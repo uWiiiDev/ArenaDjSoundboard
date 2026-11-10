@@ -468,23 +468,27 @@ body {
   line-height: 1;
   border-radius: 8px;
   border: 1px solid var(--border-color);
-  background: var(--bg-card);
-  color: var(--text-muted);
+  background: var(--bg-input);
+  color: #64748b;
   cursor: pointer;
-  opacity: 0.65;
-  transition: all 0.15s;
+  transition: all 0.15s ease;
 }
 
 .btn-follow-pill:hover {
-  opacity: 1;
-  border-color: var(--accent-blue);
+  color: var(--text-main);
+  border-color: var(--accent-green);
 }
 
 .btn-follow-pill.active {
-  opacity: 1;
-  background: rgba(56, 189, 248, 0.18);
-  border-color: var(--accent-blue);
-  color: #bae6fd;
+  background: var(--accent-green);
+  border-color: #86efac;
+  color: #052e16;
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.55);
+}
+
+.btn-follow-pill.active:hover {
+  background: #16a34a;
+  color: #ffffff;
 }
 
 .panel-scroll-body {
