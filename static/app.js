@@ -1715,6 +1715,15 @@ function renderEditorCuesList(track) {
       saveSingleCueRow(row, cueId);
     });
 
+    // Direktes Auto-Speichern bei Änderung von Farbe, Bezeichnung, Zeiten oder Fade-In
+    row
+      .querySelectorAll(
+        ".cue-color-picker, .cue-label-input, .cue-start-input, .cue-end-input, .cue-fade-input"
+      )
+      .forEach((inp) => {
+        inp.addEventListener("change", () => saveSingleCueRow(row, cueId));
+      });
+
     row.querySelector(".btn-del-cue").addEventListener("click", async () => {
       await fetch(`/api/cues/${cueId}`, { method: "DELETE" });
       await loadStateFromServer();
@@ -2042,8 +2051,49 @@ document.addEventListener("DOMContentLoaded", () => {
   // ==========================================================================
   // EDITOR MODAL EVENTS
   // ==========================================================================
-  document.getElementById("closeCueEditorBtn").addEventListener("click", closeCueEditor);
-  document.getElementById("doneCueEditorBtn").addEventListener("click", closeCueEditor);
+  async function saveEditorTrackMetadata() {
+    if (!state.editingTrackId) return;
+    const title = document.getElementById("editTrackName").value.trim() || "Unbenannt";
+    const artist = document.getElementById("editTrackArtist").value.trim();
+    const category_id = document.getElementById("editTrackCategory").value;
+    const volume = Math.max(
+      0.1,
+      Math.min(1.5, Number(document.getElementById("editTrackVolume").value) / 100)
+    );
+    const loop = document.getElementById("editTrackLoop").value === "1";
+
+    await fetch(`/api/tracks/${state.editingTrackId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, artist, category_id, volume, loop }),
+    });
+
+    await loadStateFromServer();
+  }
+
+  async function saveAndCloseCueEditor() {
+    if (state.editingTrackId) {
+      await saveEditorTrackMetadata();
+    }
+    closeCueEditor();
+  }
+
+  document.getElementById("closeCueEditorBtn").addEventListener("click", saveAndCloseCueEditor);
+  document.getElementById("doneCueEditorBtn").addEventListener("click", saveAndCloseCueEditor);
+
+  // Direktes Auto-Speichern, sobald Kategorie, Loop, Lautstärke oder Titel geändert wird!
+  [
+    "editTrackCategory",
+    "editTrackLoop",
+    "editTrackVolume",
+    "editTrackName",
+    "editTrackArtist",
+  ].forEach((fieldId) => {
+    const el = document.getElementById(fieldId);
+    if (el) {
+      el.addEventListener("change", saveEditorTrackMetadata);
+    }
+  });
 
   const editorCanvas = document.getElementById("editorWaveformCanvas");
   let isDraggingWaveform = false;
@@ -2141,22 +2191,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Lied-Stammdaten speichern
-  document.getElementById("saveTrackMetaBtn").addEventListener("click", async () => {
-    if (!state.editingTrackId) return;
-    const title = document.getElementById("editTrackName").value.trim() || "Unbenannt";
-    const artist = document.getElementById("editTrackArtist").value.trim();
-    const category_id = document.getElementById("editTrackCategory").value;
-    const volume = Math.max(0.1, Math.min(1.5, Number(document.getElementById("editTrackVolume").value) / 100));
-    const loop = document.getElementById("editTrackLoop").value === "1";
-
-    await fetch(`/api/tracks/${state.editingTrackId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, artist, category_id, volume, loop }),
-    });
-
-    await loadStateFromServer();
-  });
+  document.getElementById("saveTrackMetaBtn").addEventListener("click", saveEditorTrackMetadata);
 
   // Lied löschen
   document.getElementById("deleteTrackBtn").addEventListener("click", async () => {
