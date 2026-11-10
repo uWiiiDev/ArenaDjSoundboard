@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Arena DJ" />
+  <title>Arena DJ Soundboard – Wettkampf-Musiksteuerung</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- RESUME BANNER FÜR LOKALEN GERÄTE-TON NACH ERZWUNGENEM SEITEN-RELOAD (iOS SAFARI) -->
+  <div class="resume-banner hidden" id="localResumeBanner">
+    <span id="localResumeText">▶️ Wiedergabe lief vor dem Neuladen – antippen zum nahtlosen Fortsetzen!</span>
+    <div class="resume-banner-actions">
+      <button type="button" class="btn btn-primary btn-sm" id="localResumeBtn">▶️ Sofort fortsetzen</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="localResumeDismissBtn">✕</button>
+    </div>
+  </div>
+
+  <!-- TOP HEADER & NAVIGATION -->
+  <header class="top-bar">
+    <div class="brand">
+      <div class="brand-badge" id="onAirBadge">OFF AIR</div>
+      <div>
+        <h1>ARENA DJ <span class="brand-sub">Wettkampf-Soundboard</span></h1>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <!-- TON-AUSGANG WÄHLEN: ZENTRALER SERVER-PC vs. DIESES GERÄT -->
+      <div class="view-switcher output-switcher" role="group" aria-label="Ton-Ausgabe wählen">
+        <button
+          type="button"
+          class="view-switch-btn active"
+          id="outServerBtn"
+          title="Ton läuft zentral über den Server-PC (Hallen-Anlage) – Neuladen auf iPad/Handy unterbricht den Ton NIEMALS!"
+        >
+          🔊 Server-Ton
+        </button>
+        <button
+          type="button"
+          class="view-switch-btn"
+          id="outLocalBtn"
+          title="Ton kommt direkt aus diesem Gerät/Browser (inkl. Reload-Warnung & Fortsetzen-Schutz)"
+        >
+          📱 Gerät-Ton
+        </button>
+      </div>
+
+      <div class="view-switcher" role="group" aria-label="Ansicht wählen">
+        <button type="button" class="view-switch-btn active" id="viewGridBtn" title="Große Kachel-Ansicht">
+          ▦ <span class="hide-xs">Kacheln</span>
+        </button>
+        <button type="button" class="view-switch-btn" id="viewListBtn" title="Kompakte Listen-Ansicht (mehr Titel pro Seite)">
+          ☰ <span class="hide-xs">Liste</span>
+        </button>
+      </div>
+
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="search" id="searchInput" placeholder="Lied / Highlight suchen..." />
+      </div>
+
+      <button class="btn btn-primary" id="openUploadBtn" title="Neue MP3-Lieder hochladen">
+        <span>➕ <span class="hide-sm">MP3</span> Upload</span>
+      </button>
+
+      <button class="btn btn-secondary" id="openSettingsBtn" title="QR-Code fürs iPad, Fade-Zeiten & Einstellungen">
+        <span>📱 QR / Setup</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- CATEGORY TABS -->
+  <nav class="category-bar" id="categoryBar">
+    <!-- Dynamisch gefüllt -->
+  </nav>
+
+  <!-- 3-ELEMENTE DJ-COCKPIT: LISTE | REGLER | AKTUELLES LIED (FREI VERSCHIEBBAR PER DRAG & DROP) -->
+  <div class="workspace" id="mainWorkspace">
+    <!-- ELEMENT 1: LIEDER & HIGHLIGHTS (EIGENER AUTO-FOLLOW SCROLLBEREICH) -->
+    <section class="cockpit-panel panel-songs" id="panelSongs" data-panel-id="songs">
+      <div class="panel-drag-handle" title="Gedrückt halten & ziehen zum Verschieben">
+        <div class="drag-handle-left">
+          <span class="drag-grip">⠿</span>
+          <span class="panel-title-text">🎵 LIEDER & HIGHLIGHTS</span>
+        </div>
+        <button type="button" class="btn-follow-pill active" id="autoFollowBtn" title="Liste läuft bei Liedwechsel automatisch zum aktiven Titel mit">
+          🎯 Auto-Mitlauf
+        </button>
+      </div>
+
+      <div class="panel-scroll-body" id="songsScrollViewport">
+        <div id="soundboardGrid" class="soundboard-grid">
+          <!-- Dynamisch gefüllte Track-Cards oder Listen-Zeilen -->
+        </div>
+      </div>
+    </section>
+
+    <!-- ELEMENT 2: SENKRECHTER MASTER-REGLER & TALKOVER -->
+    <section class="cockpit-panel panel-fader" id="panelFader" data-panel-id="fader">
+      <div class="panel-drag-handle" title="Gedrückt halten & ziehen zum Verschieben">
+        <div class="drag-handle-left">
+          <span class="drag-grip">⠿</span>
+          <span class="panel-title-text">🎚️ MASTER-REGLER</span>
+        </div>
+        <span class="drag-hint-pill">Verschiebbar</span>
+      </div>
+
+      <div class="fader-card cockpit-card-inner">
+        <div class="fader-header">
+          <div>
+            <div class="fader-title">MASTER LAUTSTÄRKE</div>
+            <div class="fader-subtitle" id="effectiveVolInfo">Ausgangspegel: 85%</div>
+          </div>
+          <div class="fader-readout" id="masterVolumeValue">85%</div>
+        </div>
+
+        <div class="fader-console-layout">
+          <!-- SENKRECHTER MISCHPULT-FADER + SKALA -->
+          <div class="vfader-unit">
+            <div
+              class="vfader-track-area"
+              id="verticalFaderTrack"
+              role="slider"
+              tabindex="0"
+              aria-label="Master Lautstärke"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="85"
+            >
+              <div class="vfader-ticks" aria-hidden="true">
+                <span>100</span>
+                <span>75</span>
+                <span>50</span>
+                <span>25</span>
+                <span>0</span>
+              </div>
+
+              <div class="vfader-slot" id="verticalFaderSlot">
+                <div class="vfader-rail">
+                  <div class="vfader-fill" id="verticalFaderFill" style="height: 85%;"></div>
+                  <div class="vfader-effective-fill" id="verticalEffectiveFill" style="height: 85%;"></div>
+                </div>
+                <div class="vfader-thumb" id="verticalFaderThumb" style="bottom: 85%;">
+                  <span class="vfader-thumb-line"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="vfader-quick-col">
+              <button type="button" class="quick-vol-btn" data-vol="100">100%</button>
+              <button type="button" class="quick-vol-btn active" data-vol="85">85%</button>
+              <button type="button" class="quick-vol-btn" data-vol="65">65%</button>
+              <button type="button" class="quick-vol-btn" data-vol="40">40%</button>
+              <button type="button" class="quick-vol-btn" data-vol="20">20%</button>
+              <button type="button" class="quick-vol-btn" data-vol="0">0%</button>
+            </div>
+          </div>
+
+          <!-- RECHTE SPALTE NEBEN DEM FADER: TALKOVER & AUTOMATIK -->
+          <div class="vfader-side-panel">
+            <button class="btn-talkover btn-talkover-tall" id="btnTalkover">
+              <div class="talkover-top-row">
+                <span class="talkover-icon">🎤</span>
+                <span class="talkover-badge" id="talkoverBadge">AUS</span>
+              </div>
+              <div>
+                <div class="talkover-title">DURCHSAGE / TALKOVER</div>
+                <div class="talkover-desc" id="talkoverDesc">Musik sanft auf 20% absenken</div>
+              </div>
+            </button>
+
+            <div class="autofade-bar">
+              <label class="toggle-row">
+                <input type="checkbox" id="autoFadeToggle" checked />
+                <span class="toggle-text">Auto-Fade (<strong id="autoFadeInfo">1.5s</strong>)</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="autoNextToggle" checked />
+                <span class="toggle-text">Automatisch nächstes Lied</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="crossfadeToggle" checked />
+                <span class="toggle-text">Crossfade (<strong id="crossfadeInfo">4.0s</strong>)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ELEMENT 3: AKTUELLES LIED (ON-AIR DECK) -->
+    <section class="cockpit-panel panel-deck" id="panelDeck" data-panel-id="deck">
+      <div class="panel-drag-handle" title="Gedrückt halten & ziehen zum Verschieben">
+        <div class="drag-handle-left">
+          <span class="drag-grip">⠿</span>
+          <span class="panel-title-text">💿 AKTUELLES LIED</span>
+        </div>
+        <span class="drag-hint-pill">Verschiebbar</span>
+      </div>
+
+      <div class="deck-card cockpit-card-inner">
+        <div class="deck-header">
+          <div class="deck-header-left">
+            <span class="deck-status-dot" id="deckDot"></span>
+            <span class="deck-status-text" id="deckStatusText">Bereit für nächsten Einsatz</span>
+          </div>
+          <button type="button" class="btn-loop-pill" id="btnNowPlayingLoop" disabled title="Aktuelles Lied als Endlosschleife wiederholen">
+            🔁 Endlos: AUS
+          </button>
+        </div>
+
+        <div class="now-playing-info">
+          <div class="np-title" id="npTitle">Kein Lied geladen</div>
+          <div class="np-cue" id="npCue">Tippe auf ein Highlight-Pad zum Starten</div>
+          <div class="np-next-row hidden" id="npNextRow">
+            <span class="np-next-text" id="npNextText">⏭ Danach: –</span>
+            <button type="button" class="btn-skip-next" id="btnSkipNext" title="Sofort zum nächsten Lied springen">⏭ Nächstes</button>
+          </div>
+        </div>
+
+        <!-- INTERAKTIVE LIVE-WAVEFORM & FORTSCHRITT -->
+        <div class="np-waveform-wrap" id="npWaveformWrap" title="Tippen zum Springen im Lied">
+          <canvas id="npWaveformCanvas" width="500" height="78"></canvas>
+          <div class="np-time-row">
+            <span id="npCurrentTime">0:00.0</span>
+            <span id="npRemainingTime">-0:00.0</span>
+            <span id="npDuration">0:00</span>
+          </div>
+        </div>
+
+        <!-- TRANSPORT & FADE CONTROLS -->
+        <div class="transport-grid">
+          <button class="btn-transport btn-play-pause" id="btnPlayPause" disabled>
+            <span class="t-icon" id="playPauseIcon">▶</span>
+            <span class="t-label" id="playPauseLabel">START</span>
+          </button>
+
+          <button class="btn-transport btn-fade-out" id="btnFadeOut" disabled>
+            <span class="t-icon">📉</span>
+            <span class="t-label">SANFT AUSBLENDEN</span>
+            <span class="t-sub" id="fadeOutSubLabel">2.0s Fade-Out</span>
+          </button>
+
+          <button class="btn-transport btn-stop" id="btnStopImmediate" disabled>
+            <span class="t-icon">⏹</span>
+            <span class="t-label">SOFORT-STOP</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- MODAL 1: HIGHLIGHTS & WAVEFORM EDITOR -->
+  <div class="modal-backdrop hidden" id="cueEditorModal">
+    <div class="modal modal-large">
+      <div class="modal-header">
+        <div>
+          <h2 id="editorTrackTitle">Highlights & Wellenform bearbeiten</h2>
+          <p class="modal-subtitle">Tippe in die Wellenform zum Vorhören und setze beliebige Start-Highlights für den Wettkampf.</p>
+        </div>
+        <button class="btn-close" id="closeCueEditorBtn">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- LIED-STAMMDATEN -->
+        <div class="track-meta-row">
+          <div class="form-group">
+            <label>Lied-Titel</label>
+            <input type="text" id="editTrackName" placeholder="Titel" />
+          </div>
+          <div class="form-group">
+            <label>Interpret / Notiz</label>
+            <input type="text" id="editTrackArtist" placeholder="Interpret / Hinweis" />
+          </div>
+          <div class="form-group">
+            <label>Kategorie</label>
+            <select id="editTrackCategory"></select>
+          </div>
+          <div class="form-group form-group-small">
+            <label>Song-Lautstärke</label>
+            <input type="number" id="editTrackVolume" min="10" max="150" step="5" value="100" />
+          </div>
+          <div class="form-group form-group-small">
+            <label>Endlos-Loop</label>
+            <select id="editTrackLoop">
+              <option value="0">Nein</option>
+              <option value="1">Ja (Loop)</option>
+            </select>
+          </div>
+          <button class="btn btn-secondary btn-save-meta" id="saveTrackMetaBtn">💾 Speichern</button>
+        </div>
+
+        <!-- GROSSE INTERAKTIVE WELLENFORM -->
+        <div class="waveform-editor-box">
+          <div class="waveform-toolbar">
+            <div class="wf-controls-left">
+              <button class="btn btn-primary" id="editorPlayPauseBtn">▶ Hier vorhören</button>
+              <button class="btn btn-secondary" id="editorStepBackBtn" title="2 Sekunden zurück">⏪ -2s</button>
+              <button class="btn btn-secondary" id="editorStepFwdBtn" title="2 Sekunden vor">⏩ +2s</button>
+              <span class="editor-time-badge">
+                Position: <strong id="editorCursorTime">0:00.0</strong> / <span id="editorTotalTime">0:00.0</span>
+              </span>
+            </div>
+            <button class="btn btn-accent" id="markCurrentPosBtn">
+              📍 Aktuelle Position (<span id="markBtnTime">0:00.0</span>) als Highlight anlegen
+            </button>
+          </div>
+
+          <div class="waveform-canvas-container" id="editorWaveformContainer">
+            <canvas id="editorWaveformCanvas" width="960" height="160"></canvas>
+          </div>
+          <div class="waveform-hint">
+            💡 <strong>Tipp:</strong> Tippe oder ziehe mit dem Finger/Maus in der Wellenform, um die genaue Stelle (z. B. den Drop oder Refrain) zu finden.
+          </div>
+        </div>
+
+        <!-- LISTE DER HIGHLIGHTS (CUE POINTS) -->
+        <div class="cues-section">
+          <div class="cues-section-header">
+            <h3>Gespeicherte Highlights (Schnellstart-Buttons für dieses Lied)</h3>
+          </div>
+          <div id="editorCuesList" class="editor-cues-list">
+            <!-- Dynamisch gefüllt -->
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-danger" id="deleteTrackBtn">🗑️ Lied komplett löschen</button>
+        <button class="btn btn-primary" id="doneCueEditorBtn">Fertig & Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 2: MP3 UPLOAD -->
+  <div class="modal-backdrop hidden" id="uploadModal">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2>➕ MP3 / Audio-Dateien hinzufügen</h2>
+          <p class="modal-subtitle">Hochgeladene Lieder werden dauerhaft auf dem Server gespeichert und stehen auch beim nächsten Wettkampf bereit.</p>
+        </div>
+        <button class="btn-close" id="closeUploadBtn">✕</button>
+      </div>
+
+      <form id="uploadForm" class="modal-body">
+        <div class="dropzone" id="uploadDropzone">
+          <input type="file" id="uploadFileInput" name="files" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac" multiple required />
+          <div class="dropzone-content">
+            <div class="dropzone-icon">🎵</div>
+            <div class="dropzone-title">MP3-Dateien hier ablegen oder antippen zum Auswählen</div>
+            <div class="dropzone-sub" id="selectedFilesLabel">Mehrfachauswahl möglich (MP3, WAV, M4A, OGG)</div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Kategorie zuweisen</label>
+            <select id="uploadCategorySelect" name="category_id"></select>
+          </div>
+          <div class="form-group">
+            <label>Standard-Farbe</label>
+            <input type="color" id="uploadColorInput" name="color" value="#f97316" />
+          </div>
+        </div>
+
+        <div class="upload-progress hidden" id="uploadProgressBox">
+          <div class="upload-status-text" id="uploadStatusText">Lieder werden hochgeladen und Wellenform wird analysiert...</div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="uploadProgressBar"></div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="cancelUploadBtn">Abbrechen</button>
+          <button type="submit" class="btn btn-primary" id="submitUploadBtn">⬆️ Jetzt hochladen & speichern</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 3: EINSTELLUNGEN, KATEGORIEN & WLAN-ZUGRIFF -->
+  <div class="modal-backdrop hidden" id="settingsModal">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2>⚙️ Wettkampf-Setup & Geschützter iPad-Zugang</h2>
+          <p class="modal-subtitle">Zugriffsschutz per Token/Passwort, Fade-Zeiten, Durchsage-Pegel und Kategorien.</p>
+        </div>
+        <button class="btn-close" id="closeSettingsBtn">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- GESCHÜTZTER WLAN-ZUGANG FÜR IPAD / HANDY -->
+        <div class="security-box">
+          <div class="security-header">
+            <span>🔒 Geschützter WLAN-Zugang (iPad / Handy)</span>
+            <span class="security-status-badge" id="securityStatusBadge">AKTIV</span>
+          </div>
+
+          <!-- WEG 1: QR-CODE + GEHEIMER TOKEN-DIREKTLINK -->
+          <div class="sec-block sec-qr-layout">
+            <div class="qr-code-box">
+              <img id="magicQrImg" src="/api/auth/qr.svg" alt="QR-Code für iPad-Direktzugang" width="148" height="148" />
+              <span class="qr-caption">📱 Mit iPad-Kamera scannen</span>
+            </div>
+            <div class="qr-link-details">
+              <div class="sec-label">1. QR-Code scannen oder geheimen Direktlink nutzen (inkl. Token):</div>
+              <div class="token-url-row">
+                <input type="text" id="magicLanUrlInput" readonly value="http://localhost:8080/?token=..." />
+                <button type="button" class="btn btn-accent" id="copyMagicUrlBtn">📋 Kopieren</button>
+                <button type="button" class="btn btn-secondary" id="rotateTokenBtn" title="Erzeugt sofort einen neuen Link + neuen QR-Code und sperrt den alten">🔄 Neu</button>
+              </div>
+              <div class="lan-hint">Einfach mit der Kamera-App vom iPad/Handy abfotografieren/scannen → sofort ohne Passwort-Tippen für 30 Tage eingeloggt!</div>
+            </div>
+          </div>
+
+          <!-- WEG 2: KURZE ADRESSE + PASSWORT / PIN -->
+          <div class="sec-block">
+            <div class="sec-label">2. Oder kurze WLAN-Adresse aufrufen & Passwort / PIN eingeben:</div>
+            <div class="pin-info-row">
+              <div>
+                Adresse: <strong class="lan-short-url" id="lanUrlDisplay">http://localhost:8080</strong>
+              </div>
+              <div id="pinHintBadge" class="pin-badge">PIN geladen...</div>
+            </div>
+            <div class="password-change-row">
+              <input type="password" id="newPasswordInput" placeholder="Eigenes Passwort / neue PIN (mind. 4 Zeichen)" autocomplete="new-password" />
+              <button type="button" class="btn btn-secondary" id="savePasswordBtn">🔑 Passwort setzen</button>
+            </div>
+            <div class="sec-feedback" id="secFeedbackMsg"></div>
+          </div>
+
+          <!-- SCHUTZ-OPTIONEN -->
+          <div class="sec-toggles">
+            <label class="toggle-row">
+              <input type="checkbox" id="setAuthEnabled" checked />
+              <span>Zugriffsschutz im WLAN aktivieren (Fremde kommen ohne Token/Passwort nicht rein)</span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" id="setAuthLocalhost" />
+              <span>Passwort auch direkt an diesem Server-PC (localhost) verlangen</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Fade-In beim Start (Sek.)</label>
+            <input type="number" id="setFadeIn" min="0.1" max="10" step="0.1" value="1.5" />
+          </div>
+          <div class="form-group">
+            <label>Fade-Out beim Stopp (Sek.)</label>
+            <input type="number" id="setFadeOut" min="0.2" max="10" step="0.1" value="2.0" />
+          </div>
+          <div class="form-group">
+            <label>Crossfade / Überblenden (Sek.)</label>
+            <input type="number" id="setCrossfadeDur" min="1.0" max="15" step="0.5" value="4.0" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Talkover / Durchsage-Lautstärke (%)</label>
+            <input type="number" id="setDuckingVol" min="0" max="80" step="5" value="20" />
+          </div>
+          <div class="form-group">
+            <label>Talkover Übergangszeit (Sekunden)</label>
+            <input type="number" id="setDuckingFade" min="0.1" max="3" step="0.1" value="0.6" />
+          </div>
+        </div>
+
+        <!-- KATEGORIEN VERWALTEN -->
+        <div class="categories-manage-box">
+          <h3>Kategorien / Tabs verwalten</h3>
+          <div id="settingsCategoriesList" class="settings-cat-list"></div>
+          <div class="add-cat-row">
+            <input type="text" id="newCatIcon" value="🎵" class="cat-icon-input" maxlength="4" />
+            <input type="text" id="newCatName" placeholder="Neue Kategorie (z. B. Halbfinale)" />
+            <button type="button" class="btn btn-secondary" id="addCatBtn">+ Hinzufügen</button>
+          </div>
+        </div>
+
+        <!-- BACKUP EXPORT -->
+        <div class="backup-row">
+          <a href="/api/export" download="arena_dj_backup.json" class="btn btn-secondary">📦 Einstellungen & Highlights als Backup herunterladen</a>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-danger" id="logoutDeviceBtn" title="Dieses Gerät abmelden und sperren">🔒 Gerät abmelden</button>
+        <button class="btn btn-primary" id="saveSettingsBtn">💾 Einstellungen speichern</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MOBILES UNTERES DJ-DOCK (MINI-PLAYER + SCHNELL-BUTTONS + TAB-WECHSEL AUF HANDY & TABLET HOCHFORMAT) -->
+  <div class="mobile-bottom-dock" id="mobileBottomDock">
+    <div class="mobile-mini-player">
+      <div class="mob-np-info" id="mobOpenMixerArea">
+        <span class="mob-status-dot" id="mobStatusDot"></span>
+        <div class="mob-np-texts">
+          <div class="mob-np-title" id="mobNowTitle">Kein Lied geladen</div>
+          <div class="mob-np-sub" id="mobNowSub">Bereit • Tippe auf ein Lied</div>
+        </div>
+      </div>
+      <div class="mob-quick-btns">
+        <button type="button" class="mob-ctrl-btn mob-play" id="mobPlayPauseBtn" title="Start / Pause">▶</button>
+        <button type="button" class="mob-ctrl-btn mob-fade" id="mobFadeOutBtn" disabled title="Sanft ausblenden">📉</button>
+        <button type="button" class="mob-ctrl-btn mob-talk" id="mobTalkoverBtn" title="Durchsage / Talkover">🎤</button>
+      </div>
+    </div>
+
+    <div class="mobile-tab-bar mobile-tab-bar-3">
+      <button type="button" class="mob-tab-btn active" id="mobTabSongs" data-mob-panel="songs">
+        <span>🎵 Liste</span>
+      </button>
+      <button type="button" class="mob-tab-btn" id="mobTabFader" data-mob-panel="fader">
+        <span>🎚️ Regler (<strong id="mobFaderPct">85%</strong>)</span>
+      </button>
+      <button type="button" class="mob-tab-btn" id="mobTabDeck" data-mob-panel="deck">
+        <span>💿 Aktuell</span>
+      </button>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

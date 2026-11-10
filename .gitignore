@@ -1,0 +1,30 @@
+# Local runtime database & uploaded audio files (never commit MP3s or secrets!)
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Audio files
+*.mp3
+*.wav
+*.m4a
+*.ogg
+*.flac
+*.aac
+
+# Backup exports
+arena_dj_backup*.json
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

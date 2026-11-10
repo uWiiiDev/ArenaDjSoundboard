@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Arena DJ" />
+  <title>🔒 Arena DJ – Geschützter Bereich</title>
+  <style>
+    :root {
+      --bg-main: #0b0f19;
+      --bg-panel: #131a2a;
+      --bg-input: #0e1422;
+      --border-color: #283552;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-orange: #f97316;
+      --accent-red: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: radial-gradient(circle at top, #17223b 0%, var(--bg-main) 70%);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .login-card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 18px;
+      padding: 32px 26px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+      text-align: center;
+    }
+    .lock-icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 16px;
+      border-radius: 16px;
+      background: rgba(249, 115, 22, 0.15);
+      border: 1px solid rgba(249, 115, 22, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.9rem;
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+    p.sub {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+      line-height: 1.45;
+    }
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    input[type="password"] {
+      width: 100%;
+      background: var(--bg-input);
+      border: 2px solid var(--border-color);
+      color: var(--text-main);
+      padding: 14px 16px;
+      border-radius: 12px;
+      font-size: 1.1rem;
+      text-align: center;
+      letter-spacing: 0.08em;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="password"]:focus {
+      border-color: var(--accent-orange);
+    }
+    button {
+      width: 100%;
+      padding: 14px;
+      border-radius: 12px;
+      border: none;
+      background: var(--accent-orange);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 800;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+    button:hover { background: #ea580c; }
+    button:active { transform: scale(0.98); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .error-msg {
+      background: rgba(239, 68, 68, 0.16);
+      border: 1px solid rgba(239, 68, 68, 0.45);
+      color: #fca5a5;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 0.86rem;
+      display: none;
+    }
+    .hint {
+      margin-top: 20px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="lock-icon">🔒</div>
+    <h1>ARENA DJ GESPERRT</h1>
+    <p class="sub">Diese Wettkampf-Musiksteuerung ist geschützt. Bitte gib das Passwort / die PIN ein oder nutze den geheimen Direktlink.</p>
+
+    <form id="loginForm">
+      <div class="error-msg" id="errorMsg"></div>
+      <input
+        type="password"
+        id="passwordInput"
+        placeholder="Passwort / PIN eingeben"
+        autocomplete="current-password"
+        autofocus
+        required
+      />
+      <button type="submit" id="submitBtn">🔓 Entsperren & Verbinden</button>
+    </form>
+
+    <div class="hint">
+      Den geheimen Direktlink & das Passwort findest du am Hauptrechner unter <strong>⚙️ Setup / WLAN</strong>.
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById("loginForm");
+    const errEl = document.getElementById("errorMsg");
+    const btn = document.getElementById("submitBtn");
+    const input = document.getElementById("passwordInput");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errEl.style.display = "none";
+      btn.disabled = true;
+      btn.textContent = "Prüfe Zugang...";
+
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: input.value }),
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          window.location.replace("/");
+          return;
+        }
+        errEl.textContent = data.error || "Falsches Passwort / PIN.";
+        errEl.style.display = "block";
+        input.select();
+      } catch (err) {
+        errEl.textContent = "Verbindungsfehler zum Server.";
+        errEl.style.display = "block";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "🔓 Entsperren & Verbinden";
+      }
+    });
+  </script>
+</body>
+</html>

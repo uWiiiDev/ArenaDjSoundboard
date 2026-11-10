@@ -1,0 +1,1379 @@
+#!/usr/bin/env python3
+"""
+Arena DJ Soundboard - Zentraler Wettkampf-Musik-Server
+Speichert MP3s, Kategorien, Highlights (Cue-Points) und Einstellungen dauerhaft in SQLite.
+Unterstützt HTTP Range-Requests (206 Partial Content) für verzögerungsfreies Springen
+zu Highlights auf iPad (iOS Safari), Android und Desktop-Browsern.
+"""
+
+from email.parser import BytesParser
+from email.policy import default as default_email_policy
+import hashlib
+import hmac
+from http.cookies import SimpleCookie
+import json
+import math
+import mimetypes
+import os
+import re
+import secrets
+import shutil
+import socket
+import sqlite3
+import struct
+import subprocess
+import threading
+import time
+import urllib.parse
+import uuid
+from http import HTTPStatus
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+from qr_svg import generate_qr_svg
+from server_audio import ServerAudioEngine
+
+SESSION_COOKIE_NAME = "arena_dj_session"
+SESSION_MAX_AGE = 30 * 24 * 3600  # 30 Tage gültig auf dem iPad/Handy
+_LOGIN_LOCK = threading.Lock()
+_FAILED_LOGINS: dict[str, list[float]] = {}  # IP -> Zeitstempel fehlgeschlagener Logins
+INTERNAL_SECRET_KEYS = {
+    "cookie_secret",
+    "auth_password_hash",
+    "auth_password_salt",
+}
+
+
+def hash_password(password: str, salt: str) -> str:
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000
+    ).hex()
+
+
+def compute_session_signature(settings: dict[str, str]) -> str:
+    secret = settings.get("cookie_secret", "fallback-secret")
+    token = settings.get("access_token", "")
+    pw_hash = settings.get("auth_password_hash", "")
+    payload = f"arena_dj_v1:{token}:{pw_hash}".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+
+def check_rate_limit(ip: str) -> tuple[bool, int]:
+    """Erlaubt max. 5 Fehlversuche innerhalb von 60 Sekunden pro IP."""
+    now = time.time()
+    with _LOGIN_LOCK:
+        attempts = [t for t in _FAILED_LOGINS.get(ip, []) if now - t < 60]
+        _FAILED_LOGINS[ip] = attempts
+        if len(attempts) >= 5:
+            retry_after = max(1, int(60 - (now - attempts[0])))
+            return False, retry_after
+        return True, 0
+
+
+def record_failed_login(ip: str):
+    now = time.time()
+    with _LOGIN_LOCK:
+        attempts = [t for t in _FAILED_LOGINS.get(ip, []) if now - t < 60]
+        attempts.append(now)
+        _FAILED_LOGINS[ip] = attempts
+
+
+def clear_failed_logins(ip: str):
+    with _LOGIN_LOCK:
+        _FAILED_LOGINS.pop(ip, None)
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+UPLOADS_DIR = DATA_DIR / "uploads"
+DB_PATH = DATA_DIR / "arena_dj.db"
+STATIC_DIR = BASE_DIR / "static"
+
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def get_local_ip() -> str:
+    """Ermittelt die lokale WLAN/LAN-IP-Adresse für den Zugriff vom iPad/Handy."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+
+
+def get_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def compute_audio_info_and_peaks(filepath: Path, num_peaks: int = 180) -> tuple[float, list[float]]:
+    """
+    Nutzt ffmpeg/ffprobe (falls vorhanden), um Dauer und Wellenform-Peaks schnell zu berechnen.
+    Falls nicht verfügbar, übernimmt das Frontend per Web Audio API die Berechnung.
+    """
+    duration = 0.0
+    peaks: list[float] = []
+    try:
+        # 1. Dauer per ffprobe ermitteln
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(filepath),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if probe.returncode == 0 and probe.stdout.strip():
+            duration = round(float(probe.stdout.strip()), 2)
+
+        # 2. Roh-Audio (Mono, 4000 Hz, 16-bit signed PCM) für schnelle Waveform-Peaks lesen
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(filepath),
+                "-ac",
+                "1",
+                "-ar",
+                "2000",
+                "-f",
+                "s16le",
+                "-",
+            ],
+            capture_output=True,
+            timeout=20,
+        )
+        raw = proc.stdout
+        total_samples = len(raw) // 2
+        if total_samples > 0:
+            samples = struct.unpack(f"<{total_samples}h", raw[: total_samples * 2])
+            chunk_size = max(1, total_samples // num_peaks)
+            raw_peaks = []
+            for i in range(num_peaks):
+                start = i * chunk_size
+                end = min(total_samples, start + chunk_size)
+                if start >= total_samples:
+                    raw_peaks.append(0.05)
+                else:
+                    segment = samples[start:end]
+                    max_val = max(abs(x) for x in segment) if segment else 0
+                    raw_peaks.append(max_val / 32768.0)
+            max_peak = max(raw_peaks) if raw_peaks else 1.0
+            if max_peak > 0:
+                peaks = [round(max(0.04, p / max_peak), 3) for p in raw_peaks]
+            else:
+                peaks = [0.1] * num_peaks
+    except Exception as e:
+        print(f"Hinweis bei Audio-Analyse: {e}")
+
+    return duration, peaks
+
+
+def generate_demo_audio_files():
+    """
+    Erzeugt beim allerersten Start 3 Demo-MP3s mit unterschiedlichen Abschnitten,
+    damit das Soundboard und die Wellenform sofort getestet werden können.
+    """
+    demos = [
+        {
+            "filename": "demo_arena_hype.mp3",
+            "title": "Arena Hype Anthem (Demo)",
+            "artist": "Stadium Beats",
+            "category": "action",
+            "color": "#f97316",
+            "filter": (
+                "aevalsrc='"
+                "if(lt(t,6), 0.25*sin(2*PI*110*t)*exp(-4*mod(t,0.5)), "
+                "if(lt(t,18), 0.45*sin(2*PI*55*t)*exp(-3*mod(t,0.4)) + 0.3*sin(2*PI*440*t*(1+0.5*mod(floor(t*4),3)))*exp(-6*mod(t,0.25)), "
+                "0.5*sin(2*PI*65*t)*exp(-2.5*mod(t,0.35)) + 0.35*sin(2*PI*523.25*t*(1+0.25*mod(floor(t*8),4)))*exp(-5*mod(t,0.125))"
+                "))':s=44100:d=30"
+            ),
+            "cues": [
+                {"label": "🥁 Intro Beat", "start_time": 0.0, "end_time": None, "color": "#38bdf8", "fade_in": 1},
+                {"label": "🔥 Main Drop", "start_time": 6.0, "end_time": None, "color": "#f97316", "fade_in": 0},
+                {"label": "⚡ Finale / Climax", "start_time": 18.0, "end_time": None, "color": "#ef4444", "fade_in": 0},
+            ],
+        },
+        {
+            "filename": "demo_spannung_heartbeat.mp3",
+            "title": "Spannung vor dem Versuch (Demo)",
+            "artist": "Arena FX",
+            "category": "tension",
+            "color": "#a855f7",
+            "filter": (
+                "aevalsrc='"
+                "if(lt(t,10), 0.5*sin(2*PI*50*t)*(exp(-12*mod(t,1.0)) + 0.6*exp(-12*mod(t-0.22,1.0))), "
+                "0.55*sin(2*PI*55*t)*(exp(-14*mod(t,0.6)) + 0.7*exp(-14*mod(t-0.16,0.6))) + 0.18*sin(2*PI*(220+t*15)*t)"
+                ")':s=44100:d=22"
+            ),
+            "cues": [
+                {"label": "💓 Ruhiger Puls", "start_time": 0.0, "end_time": None, "color": "#a855f7", "fade_in": 1},
+                {"label": "🚨 Schneller Puls + Riser", "start_time": 10.0, "end_time": None, "color": "#ec4899", "fade_in": 1},
+            ],
+        },
+        {
+            "filename": "demo_sieger_fanfare.mp3",
+            "title": "Punktgewinn / Applaus-Jingle (Demo)",
+            "artist": "Show Opener",
+            "category": "jingles",
+            "color": "#22c55e",
+            "filter": (
+                "aevalsrc='"
+                "if(lt(t,4), (0.3*sin(2*PI*261.63*t)+0.25*sin(2*PI*329.63*t)+0.25*sin(2*PI*392.00*t))*exp(-1.5*mod(t,1.0)), "
+                "(0.35*sin(2*PI*523.25*t)+0.25*sin(2*PI*659.25*t)+0.25*sin(2*PI*783.99*t))*exp(-0.4*(t-4))"
+                ")':s=44100:d=10"
+            ),
+            "cues": [
+                {"label": "🎺 Fanfare Start", "start_time": 0.0, "end_time": 9.5, "color": "#22c55e", "fade_in": 0},
+                {"label": "🏆 Sieger-Akkord", "start_time": 4.0, "end_time": 9.5, "color": "#eab308", "fade_in": 0},
+            ],
+        },
+    ]
+
+    conn = get_db()
+    for idx, demo in enumerate(demos):
+        filepath = UPLOADS_DIR / demo["filename"]
+        if not filepath.exists():
+            try:
+                subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-v",
+                        "error",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        demo["filter"],
+                        "-codec:a",
+                        "libmp3lame",
+                        "-qscale:a",
+                        "4",
+                        str(filepath),
+                    ],
+                    check=True,
+                    timeout=15,
+                )
+            except Exception as e:
+                print(f"Konnte Demo-Audio nicht erstellen ({demo['filename']}): {e}")
+                continue
+
+        duration, peaks = compute_audio_info_and_peaks(filepath)
+        cur = conn.execute(
+            """
+            INSERT INTO tracks (title, artist, filename, category_id, duration, volume, color, peaks_json, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                demo["title"],
+                demo["artist"],
+                demo["filename"],
+                demo["category"],
+                duration,
+                1.0,
+                demo["color"],
+                json.dumps(peaks),
+                idx,
+            ),
+        )
+        track_id = cur.lastrowid
+        for c_idx, cue in enumerate(demo["cues"]):
+            conn.execute(
+                """
+                INSERT INTO cues (track_id, label, start_time, end_time, color, fade_in, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    track_id,
+                    cue["label"],
+                    cue["start_time"],
+                    cue["end_time"],
+                    cue["color"],
+                    cue["fade_in"],
+                    c_idx,
+                ),
+            )
+    conn.commit()
+    conn.close()
+
+
+def init_db():
+    conn = get_db()
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS categories (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            icon TEXT NOT NULL DEFAULT '🎵',
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS tracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            artist TEXT NOT NULL DEFAULT '',
+            filename TEXT NOT NULL,
+            category_id TEXT NOT NULL DEFAULT 'action',
+            duration REAL NOT NULL DEFAULT 0,
+            volume REAL NOT NULL DEFAULT 1.0,
+            color TEXT NOT NULL DEFAULT '#f97316',
+            loop INTEGER NOT NULL DEFAULT 0,
+            peaks_json TEXT NOT NULL DEFAULT '[]',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS cues (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            label TEXT NOT NULL,
+            start_time REAL NOT NULL DEFAULT 0.0,
+            end_time REAL DEFAULT NULL,
+            color TEXT NOT NULL DEFAULT '#f97316',
+            fade_in INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """
+    )
+
+    # Standard-Kategorien anlegen, falls noch leer
+    cat_count = conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
+    if cat_count == 0:
+        default_categories = [
+            ("action", "Zwischen Athleten", "🔥", 1),
+            ("walkin", "Einlauf / Start", "🚶", 2),
+            ("tension", "Spannung / Finale", "⚡", 3),
+            ("jingles", "Jingles & Effekte", "🎉", 4),
+            ("ceremony", "Siegerehrung & Pause", "🏅", 5),
+        ]
+        conn.executemany(
+            "INSERT INTO categories (id, name, icon, sort_order) VALUES (?, ?, ?, ?)",
+            default_categories,
+        )
+
+    # Standard-Settings
+    default_settings = {
+        "fade_in_duration": "1.5",
+        "fade_out_duration": "2.0",
+        "ducking_volume": "0.20",
+        "ducking_fade": "0.6",
+        "master_volume": "0.85",
+        "auto_fade_enabled": "true",
+        "auto_next_enabled": "true",
+        "crossfade_enabled": "true",
+        "crossfade_duration": "4.0",
+        "auth_enabled": "true",
+        "auth_require_on_localhost": "false",
+        "view_mode": "grid",
+        "output_mode": "server",
+        "panel_order": "songs,fader,deck",
+    }
+    for k, v in default_settings.items():
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v)
+        )
+
+    # Kryptografische Secrets & initialer Zugriffsschutz anlegen
+    existing_settings = {
+        r["key"]: r["value"]
+        for r in conn.execute("SELECT key, value FROM settings").fetchall()
+    }
+    if "cookie_secret" not in existing_settings:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('cookie_secret', ?)",
+            (secrets.token_hex(32),),
+        )
+    if "access_token" not in existing_settings:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('access_token', ?)",
+            (secrets.token_urlsafe(18),),
+        )
+    if "auth_password_hash" not in existing_settings:
+        initial_pin = str(secrets.randbelow(900000) + 100000)
+        salt = secrets.token_hex(16)
+        pw_hash = hash_password(initial_pin, salt)
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('auth_password_salt', ?)",
+            (salt,),
+        )
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('auth_password_hash', ?)",
+            (pw_hash,),
+        )
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('auth_initial_pin_hint', ?)",
+            (initial_pin,),
+        )
+
+    track_count = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+    initialized_before = conn.execute(
+        "SELECT value FROM settings WHERE key = 'demo_seeded'"
+    ).fetchone()
+
+    conn.commit()
+    conn.close()
+
+    if track_count == 0 and not initialized_before:
+        generate_demo_audio_files()
+        conn = get_db()
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('demo_seeded', '1')"
+        )
+        conn.commit()
+        conn.close()
+
+
+def load_all_settings() -> dict[str, str]:
+    conn = get_db()
+    rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    conn.close()
+    return {r["key"]: r["value"] for r in rows}
+
+
+def load_tracks_and_settings() -> tuple[list[dict], dict[str, str]]:
+    conn = get_db()
+    tracks_rows = conn.execute(
+        "SELECT * FROM tracks ORDER BY sort_order ASC, id DESC"
+    ).fetchall()
+    cues_rows = conn.execute(
+        "SELECT * FROM cues ORDER BY start_time ASC, id ASC"
+    ).fetchall()
+    settings_rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    conn.close()
+
+    cues_by_track: dict[int, list[dict]] = {}
+    for c in cues_rows:
+        cd = dict(c)
+        cd["fade_in"] = bool(cd["fade_in"])
+        cues_by_track.setdefault(cd["track_id"], []).append(cd)
+
+    tracks = []
+    for t in tracks_rows:
+        td = dict(t)
+        td["loop"] = bool(td["loop"])
+        td.pop("peaks_json", None)
+        td["cues"] = cues_by_track.get(td["id"], [])
+        tracks.append(td)
+
+    settings = {r["key"]: r["value"] for r in settings_rows}
+    return tracks, settings
+
+
+PLAYER_ENGINE: ServerAudioEngine | None = None
+
+
+class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format, *args):
+        # Ruhiges Logging für saubere Konsole
+        pass
+
+    def is_localhost_client(self) -> bool:
+        client_ip = self.client_address[0]
+        return client_ip in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+    def build_session_cookie_header(self, settings: dict[str, str], clear: bool = False) -> str:
+        if clear:
+            return f"{SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+        sig = compute_session_signature(settings)
+        return f"{SESSION_COOKIE_NAME}={sig}; Path=/; Max-Age={SESSION_MAX_AGE}; HttpOnly; SameSite=Lax"
+
+    def is_authenticated(self, settings: dict[str, str] | None = None) -> tuple[bool, bool]:
+        """
+        Prüft, ob die aktuelle Anfrage autorisiert ist.
+        Gibt (authorized, matched_via_url_token) zurück.
+        """
+        if settings is None:
+            settings = load_all_settings()
+
+        if settings.get("auth_enabled", "true") == "false":
+            return True, False
+
+        if self.is_localhost_client() and settings.get("auth_require_on_localhost", "false") == "false":
+            return True, False
+
+        expected_token = settings.get("access_token", "")
+        expected_sig = compute_session_signature(settings)
+
+        # 1. URL-Query ?token=... prüfen (Magic Link fürs iPad)
+        parsed = urllib.parse.urlparse(self.path)
+        qs = urllib.parse.parse_qs(parsed.query)
+        url_token = (qs.get("token") or [""])[0]
+        if url_token and expected_token and hmac.compare_digest(url_token, expected_token):
+            return True, True
+
+        # 2. Authorization: Bearer <token> prüfen
+        auth_header = self.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            bearer = auth_header[7:].strip()
+            if bearer and expected_token and hmac.compare_digest(bearer, expected_token):
+                return True, False
+
+        # 3. Session-Cookie prüfen
+        cookie_raw = self.headers.get("Cookie", "")
+        if cookie_raw:
+            cookie = SimpleCookie()
+            try:
+                cookie.load(cookie_raw)
+                if SESSION_COOKIE_NAME in cookie:
+                    cookie_val = cookie[SESSION_COOKIE_NAME].value
+                    if cookie_val and hmac.compare_digest(cookie_val, expected_sig):
+                        return True, False
+            except Exception:
+                pass
+
+        return False, False
+
+    def send_json(self, data: dict | list, status: int = 200, extra_headers: dict[str, str] | None = None):
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if extra_headers:
+            for hk, hv in extra_headers.items():
+                self.send_header(hk, hv)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def read_json_body(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length)
+        return json.loads(raw.decode("utf-8"))
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.send_header(
+            "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"
+        )
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Range, Authorization")
+        self.end_headers()
+
+    def do_HEAD(self):
+        self.do_GET()
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        settings = load_all_settings()
+        authed, via_url_token = self.is_authenticated(settings)
+
+        # Wenn ein gültiger ?token=... Link aufgerufen wurde -> Cookie setzen & URL bereinigen!
+        if authed and via_url_token and path in ("/", "", "/index.html"):
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Set-Cookie", self.build_session_cookie_header(settings))
+            self.send_header("Location", "/")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+
+        if path == "/api/state":
+            if not authed:
+                return self.send_json({"error": "Nicht autorisiert"}, 401)
+            return self.handle_get_state()
+        if path == "/api/player/status":
+            if not authed:
+                return self.send_json({"error": "Nicht autorisiert"}, 401)
+            status = PLAYER_ENGINE.get_status() if PLAYER_ENGINE else {"audio_available": False}
+            return self.send_json(status)
+        if path == "/api/auth/qr.svg":
+            if not authed:
+                return self.send_json({"error": "Nicht autorisiert"}, 401)
+            port = self.server.server_address[1]
+            local_ip = get_local_ip()
+            access_token = settings.get("access_token", "")
+            magic_url = f"http://{local_ip}:{port}/?token={urllib.parse.quote(access_token)}"
+            svg_bytes = generate_qr_svg(magic_url).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+            self.send_header("Content-Length", str(len(svg_bytes)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(svg_bytes)
+            return
+        if path == "/api/export":
+            if not authed:
+                return self.send_json({"error": "Nicht autorisiert"}, 401)
+            return self.handle_export()
+        if path.startswith("/media/"):
+            if not authed:
+                return self.send_json({"error": "Nicht autorisiert"}, 401)
+            filename = urllib.parse.unquote(path[len("/media/") :])
+            return self.serve_media_with_range(filename)
+
+        # Nicht eingeloggt -> Login-Sperrbildschirm anzeigen
+        if not authed:
+            login_file = STATIC_DIR / "login.html"
+            data = login_file.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(data)
+            return
+
+        # Statische Dateien aus /static ausliefern
+        if path == "/" or path == "":
+            path = "/index.html"
+
+        safe_rel = path.lstrip("/")
+        file_path = (STATIC_DIR / safe_rel).resolve()
+        if not str(file_path).startswith(str(STATIC_DIR.resolve())) or not file_path.is_file():
+            self.send_error(404, "Datei nicht gefunden")
+            return
+
+        ctype, _ = mimetypes.guess_type(str(file_path))
+        ctype = ctype or "application/octet-stream"
+        data = file_path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def serve_media_with_range(self, filename: str):
+        """
+        Liefert Audio-Dateien inkl. HTTP Range Support (206 Partial Content) aus.
+        Das ist essenziell, damit iPad/iPhone (Safari) und Chrome sofort an beliebige
+        Sekunden-Positionen (Highlights/Cue-Points) springen können.
+        """
+        safe_name = os.path.basename(filename)
+        file_path = UPLOADS_DIR / safe_name
+        if not file_path.is_file():
+            self.send_error(404, "Audio-Datei nicht gefunden")
+            return
+
+        file_size = file_path.stat().st_size
+        ctype, _ = mimetypes.guess_type(str(file_path))
+        if not ctype:
+            ctype = "audio/mpeg"
+
+        range_header = self.headers.get("Range")
+        if range_header:
+            m = re.match(r"bytes=(\d*)-(\d*)", range_header)
+            if m:
+                start_str, end_str = m.groups()
+                start = int(start_str) if start_str else 0
+                end = int(end_str) if end_str else file_size - 1
+                if start >= file_size:
+                    self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    self.send_header("Content-Range", f"bytes */{file_size}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                end = min(end, file_size - 1)
+                chunk_len = end - start + 1
+
+                self.send_response(HTTPStatus.PARTIAL_CONTENT)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+                self.send_header("Content-Length", str(chunk_len))
+                self.end_headers()
+
+                if self.command == "HEAD":
+                    return
+
+                with open(file_path, "rb") as f:
+                    f.seek(start)
+                    remaining = chunk_len
+                    while remaining > 0:
+                        buf = f.read(min(65536, remaining))
+                        if not buf:
+                            break
+                        try:
+                            self.wfile.write(buf)
+                        except (BrokenPipeError, ConnectionResetError):
+                            break
+                        remaining -= len(buf)
+                return
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(file_size))
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        with open(file_path, "rb") as f:
+            try:
+                shutil.copyfileobj(f, self.wfile)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    def handle_get_state(self):
+        conn = get_db()
+        categories = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT * FROM categories ORDER BY sort_order ASC, name ASC"
+            ).fetchall()
+        ]
+        tracks_rows = conn.execute(
+            "SELECT * FROM tracks ORDER BY sort_order ASC, id DESC"
+        ).fetchall()
+        cues_rows = conn.execute(
+            "SELECT * FROM cues ORDER BY start_time ASC, id ASC"
+        ).fetchall()
+        settings_rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        conn.close()
+
+        cues_by_track: dict[int, list[dict]] = {}
+        for c in cues_rows:
+            cd = dict(c)
+            cd["fade_in"] = bool(cd["fade_in"])
+            cues_by_track.setdefault(cd["track_id"], []).append(cd)
+
+        tracks = []
+        for t in tracks_rows:
+            td = dict(t)
+            td["loop"] = bool(td["loop"])
+            try:
+                td["peaks"] = json.loads(td.pop("peaks_json", "[]"))
+            except Exception:
+                td["peaks"] = []
+            td["url"] = f"/media/{urllib.parse.quote(td['filename'])}"
+            td["cues"] = cues_by_track.get(td["id"], [])
+            tracks.append(td)
+
+        raw_settings = {r["key"]: r["value"] for r in settings_rows}
+        public_settings = {
+            k: v
+            for k, v in raw_settings.items()
+            if k not in INTERNAL_SECRET_KEYS and k not in ("access_token", "auth_initial_pin_hint")
+        }
+
+        port = self.server.server_address[1]
+        local_ip = get_local_ip()
+        access_token = raw_settings.get("access_token", "")
+        lan_url = f"http://{local_ip}:{port}"
+        magic_lan_url = f"{lan_url}/?token={urllib.parse.quote(access_token)}"
+
+        self.send_json(
+            {
+                "categories": categories,
+                "tracks": tracks,
+                "settings": public_settings,
+                "server_info": {
+                    "local_ip": local_ip,
+                    "port": port,
+                    "lan_url": lan_url,
+                    "magic_lan_url": magic_lan_url,
+                },
+                "auth_info": {
+                    "auth_enabled": raw_settings.get("auth_enabled", "true") != "false",
+                    "auth_require_on_localhost": raw_settings.get("auth_require_on_localhost", "false") == "true",
+                    "access_token": access_token,
+                    "initial_pin_hint": raw_settings.get("auth_initial_pin_hint"),
+                    "has_custom_password": "auth_initial_pin_hint" not in raw_settings,
+                    "is_localhost": self.is_localhost_client(),
+                },
+                "player_status": PLAYER_ENGINE.get_status() if PLAYER_ENGINE else {"audio_available": False},
+            }
+        )
+
+    def handle_export(self):
+        conn = get_db()
+        categories = [dict(r) for r in conn.execute("SELECT * FROM categories").fetchall()]
+        tracks = [dict(r) for r in conn.execute("SELECT * FROM tracks").fetchall()]
+        cues = [dict(r) for r in conn.execute("SELECT * FROM cues").fetchall()]
+        settings = {
+            r["key"]: r["value"]
+            for r in conn.execute("SELECT key, value FROM settings").fetchall()
+            if r["key"] not in INTERNAL_SECRET_KEYS and r["key"] not in ("access_token", "auth_initial_pin_hint")
+        }
+        conn.close()
+        self.send_json(
+            {
+                "version": 1,
+                "categories": categories,
+                "tracks": tracks,
+                "cues": cues,
+                "settings": settings,
+            }
+        )
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+
+        # Login ist öffentlich erreichbar (mit Brute-Force-Schutz)
+        if path == "/api/auth/login":
+            return self.handle_auth_login()
+
+        authed, _ = self.is_authenticated()
+        if not authed:
+            return self.send_json({"error": "Nicht autorisiert"}, 401)
+
+        if path == "/api/player/command":
+            return self.handle_player_command()
+
+        if path == "/api/auth/logout":
+            return self.handle_auth_logout()
+
+        if path == "/api/auth/rotate-token":
+            return self.handle_rotate_token()
+
+        if path == "/api/auth/password":
+            return self.handle_change_password()
+
+        if path == "/api/tracks":
+            return self.handle_upload_tracks()
+
+        m_cue = re.match(r"^/api/tracks/(\d+)/cues$", path)
+        if m_cue:
+            return self.handle_create_cue(int(m_cue.group(1)))
+
+        if path == "/api/categories":
+            return self.handle_create_category()
+
+        if path == "/api/import":
+            return self.handle_import()
+
+        self.send_error(404, "Endpoint nicht gefunden")
+
+    def do_PUT(self):
+        authed, _ = self.is_authenticated()
+        if not authed:
+            return self.send_json({"error": "Nicht autorisiert"}, 401)
+
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+
+        if path == "/api/tracks/reorder":
+            return self.handle_reorder_tracks()
+
+        m_track = re.match(r"^/api/tracks/(\d+)$", path)
+        if m_track:
+            return self.handle_update_track(int(m_track.group(1)))
+
+        m_cue = re.match(r"^/api/cues/(\d+)$", path)
+        if m_cue:
+            return self.handle_update_cue(int(m_cue.group(1)))
+
+        if path == "/api/settings":
+            return self.handle_update_settings()
+
+        self.send_error(404, "Endpoint nicht gefunden")
+
+    def do_DELETE(self):
+        authed, _ = self.is_authenticated()
+        if not authed:
+            return self.send_json({"error": "Nicht autorisiert"}, 401)
+
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+
+        m_track = re.match(r"^/api/tracks/(\d+)$", path)
+        if m_track:
+            return self.handle_delete_track(int(m_track.group(1)))
+
+        m_cue = re.match(r"^/api/cues/(\d+)$", path)
+        if m_cue:
+            return self.handle_delete_cue(int(m_cue.group(1)))
+
+        m_cat = re.match(r"^/api/categories/([a-zA-Z0-9_-]+)$", path)
+        if m_cat:
+            return self.handle_delete_category(m_cat.group(1))
+
+        self.send_error(404, "Endpoint nicht gefunden")
+
+    def handle_upload_tracks(self):
+        ctype = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in ctype:
+            return self.send_json({"error": "Multipart form-data erwartet"}, 400)
+
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if content_length <= 0:
+            return self.send_json({"error": "Leerer Upload"}, 400)
+
+        raw_body = self.rfile.read(content_length)
+        header_bytes = f"Content-Type: {ctype}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
+        msg = BytesParser(policy=default_email_policy).parsebytes(header_bytes + raw_body)
+
+        fields: dict[str, str] = {}
+        uploaded_files: list[tuple[str, bytes]] = []
+
+        for part in msg.iter_parts():
+            cd = part.get("Content-Disposition", "")
+            if "form-data" not in cd:
+                continue
+            field_name = part.get_param("name", header="content-disposition")
+            filename = part.get_filename()
+            payload = part.get_payload(decode=True) or b""
+            if filename:
+                uploaded_files.append((filename, payload))
+            elif field_name:
+                fields[field_name] = payload.decode("utf-8", errors="replace")
+
+        category_id = fields.get("category_id", "action")
+        color = fields.get("color", "#f97316")
+
+        created_ids = []
+        conn = get_db()
+        max_order = conn.execute("SELECT COALESCE(MAX(sort_order), -1) FROM tracks").fetchone()[0]
+
+        palette = ["#f97316", "#38bdf8", "#a855f7", "#22c55e", "#eab308", "#ec4899"]
+
+        for idx, (raw_filename, file_bytes) in enumerate(uploaded_files):
+            orig_name = os.path.basename(raw_filename)
+            stem, ext = os.path.splitext(orig_name)
+            ext = ext.lower() if ext else ".mp3"
+            safe_stem = re.sub(r"[^a-zA-Z0-9_-]+", "_", stem).strip("_") or "track"
+            unique_filename = f"{safe_stem}_{uuid.uuid4().hex[:8]}{ext}"
+            dest_path = UPLOADS_DIR / unique_filename
+
+            dest_path.write_bytes(file_bytes)
+
+            # Titel und optional Interpret aus Dateinamen erraten ("Artist - Title")
+            artist = ""
+            title = stem.replace("_", " ").strip()
+            if " - " in title:
+                parts = title.split(" - ", 1)
+                artist = parts[0].strip()
+                title = parts[1].strip()
+
+            duration, peaks = compute_audio_info_and_peaks(dest_path)
+            track_color = color if len(uploaded_files) == 1 else palette[idx % len(palette)]
+
+            cur = conn.execute(
+                """
+                INSERT INTO tracks (title, artist, filename, category_id, duration, volume, color, peaks_json, sort_order)
+                VALUES (?, ?, ?, ?, ?, 1.0, ?, ?, ?)
+                """,
+                (
+                    title,
+                    artist,
+                    unique_filename,
+                    category_id,
+                    duration,
+                    track_color,
+                    json.dumps(peaks),
+                    max_order + 1 + idx,
+                ),
+            )
+            track_id = cur.lastrowid
+            created_ids.append(track_id)
+
+        conn.commit()
+        conn.close()
+        self.send_json({"ok": True, "created_ids": created_ids}, 201)
+
+    def handle_reorder_tracks(self):
+        data = self.read_json_body()
+        track_ids = data.get("track_ids") or []
+        if not isinstance(track_ids, list):
+            return self.send_json({"error": "track_ids Liste erwartet"}, 400)
+
+        conn = get_db()
+        for idx, tid in enumerate(track_ids):
+            conn.execute(
+                "UPDATE tracks SET sort_order = ? WHERE id = ?",
+                (idx, int(tid)),
+            )
+        conn.commit()
+        conn.close()
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+        self.send_json({"ok": True})
+
+    def handle_update_track(self, track_id: int):
+        data = self.read_json_body()
+        conn = get_db()
+        existing = conn.execute(
+            "SELECT * FROM tracks WHERE id = ?", (track_id,)
+        ).fetchone()
+        if not existing:
+            conn.close()
+            return self.send_json({"error": "Lied nicht gefunden"}, 404)
+
+        title = data.get("title", existing["title"])
+        artist = data.get("artist", existing["artist"])
+        category_id = data.get("category_id", existing["category_id"])
+        volume = float(data.get("volume", existing["volume"]))
+        color = data.get("color", existing["color"])
+        loop = 1 if data.get("loop", bool(existing["loop"])) else 0
+        duration = float(data.get("duration", existing["duration"]))
+        peaks_json = (
+            json.dumps(data["peaks"])
+            if "peaks" in data
+            else existing["peaks_json"]
+        )
+
+        conn.execute(
+            """
+            UPDATE tracks
+            SET title = ?, artist = ?, category_id = ?, volume = ?, color = ?, loop = ?, duration = ?, peaks_json = ?
+            WHERE id = ?
+            """,
+            (title, artist, category_id, volume, color, loop, duration, peaks_json, track_id),
+        )
+        conn.commit()
+        conn.close()
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+        self.send_json({"ok": True})
+
+    def handle_delete_track(self, track_id: int):
+        conn = get_db()
+        row = conn.execute(
+            "SELECT filename FROM tracks WHERE id = ?", (track_id,)
+        ).fetchone()
+        if not row:
+            conn.close()
+            return self.send_json({"error": "Lied nicht gefunden"}, 404)
+
+        conn.execute("DELETE FROM tracks WHERE id = ?", (track_id,))
+        conn.commit()
+        conn.close()
+
+        filepath = UPLOADS_DIR / os.path.basename(row["filename"])
+        if filepath.is_file():
+            try:
+                filepath.unlink()
+            except Exception:
+                pass
+        self.send_json({"ok": True})
+
+    def handle_create_cue(self, track_id: int):
+        data = self.read_json_body()
+        label = (data.get("label") or "🔥 Highlight").strip()
+        start_time = max(0.0, float(data.get("start_time", 0.0)))
+        end_time_raw = data.get("end_time")
+        end_time = (
+            float(end_time_raw)
+            if end_time_raw not in (None, "", 0, "0")
+            else None
+        )
+        color = data.get("color", "#f97316")
+        fade_in = 1 if data.get("fade_in", True) else 0
+
+        conn = get_db()
+        cur = conn.execute(
+            """
+            INSERT INTO cues (track_id, label, start_time, end_time, color, fade_in)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (track_id, label, round(start_time, 2), round(end_time, 2) if end_time else None, color, fade_in),
+        )
+        cue_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        self.send_json({"ok": True, "id": cue_id}, 201)
+
+    def handle_update_cue(self, cue_id: int):
+        data = self.read_json_body()
+        conn = get_db()
+        existing = conn.execute(
+            "SELECT * FROM cues WHERE id = ?", (cue_id,)
+        ).fetchone()
+        if not existing:
+            conn.close()
+            return self.send_json({"error": "Highlight nicht gefunden"}, 404)
+
+        label = (data.get("label") or existing["label"]).strip()
+        start_time = max(0.0, float(data.get("start_time", existing["start_time"])))
+        if "end_time" in data:
+            end_raw = data["end_time"]
+            end_time = float(end_raw) if end_raw not in (None, "", 0, "0") else None
+        else:
+            end_time = existing["end_time"]
+        color = data.get("color", existing["color"])
+        fade_in = 1 if data.get("fade_in", bool(existing["fade_in"])) else 0
+
+        conn.execute(
+            """
+            UPDATE cues
+            SET label = ?, start_time = ?, end_time = ?, color = ?, fade_in = ?
+            WHERE id = ?
+            """,
+            (label, round(start_time, 2), round(end_time, 2) if end_time else None, color, fade_in, cue_id),
+        )
+        conn.commit()
+        conn.close()
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+        self.send_json({"ok": True})
+
+    def handle_delete_cue(self, cue_id: int):
+        conn = get_db()
+        conn.execute("DELETE FROM cues WHERE id = ?", (cue_id,))
+        conn.commit()
+        conn.close()
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+        self.send_json({"ok": True})
+
+    def handle_create_category(self):
+        data = self.read_json_body()
+        name = (data.get("name") or "").strip()
+        icon = (data.get("icon") or "🎵").strip()
+        if not name:
+            return self.send_json({"error": "Name erforderlich"}, 400)
+        cat_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or uuid.uuid4().hex[:6]
+
+        conn = get_db()
+        max_order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) FROM categories").fetchone()[0]
+        conn.execute(
+            "INSERT OR REPLACE INTO categories (id, name, icon, sort_order) VALUES (?, ?, ?, ?)",
+            (cat_id, name, icon, max_order + 1),
+        )
+        conn.commit()
+        conn.close()
+        self.send_json({"ok": True, "id": cat_id}, 201)
+
+    def handle_delete_category(self, cat_id: str):
+        conn = get_db()
+        conn.execute("UPDATE tracks SET category_id = 'action' WHERE category_id = ?", (cat_id,))
+        conn.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+        conn.commit()
+        conn.close()
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+        self.send_json({"ok": True})
+
+    def handle_auth_login(self):
+        client_ip = self.client_address[0]
+        allowed, retry_after = check_rate_limit(client_ip)
+        if not allowed:
+            return self.send_json(
+                {
+                    "error": f"Zu viele Fehlversuche. Bitte {retry_after} Sekunden warten."
+                },
+                429,
+            )
+
+        data = self.read_json_body()
+        candidate = str(data.get("password") or "").strip()
+        if not candidate:
+            return self.send_json({"error": "Bitte Passwort oder PIN eingeben."}, 400)
+
+        settings = load_all_settings()
+        salt = settings.get("auth_password_salt", "")
+        expected_hash = settings.get("auth_password_hash", "")
+        access_token = settings.get("access_token", "")
+
+        # Sowohl das Passwort/PIN als auch das geheime Token akzeptieren
+        candidate_hash = hash_password(candidate, salt) if salt else ""
+        pw_ok = bool(expected_hash) and hmac.compare_digest(candidate_hash, expected_hash)
+        token_ok = bool(access_token) and hmac.compare_digest(candidate, access_token)
+
+        if not (pw_ok or token_ok):
+            record_failed_login(client_ip)
+            return self.send_json({"error": "Falsches Passwort / PIN."}, 401)
+
+        clear_failed_logins(client_ip)
+        cookie_hdr = self.build_session_cookie_header(settings)
+        self.send_json({"ok": True}, 200, extra_headers={"Set-Cookie": cookie_hdr})
+
+    def handle_auth_logout(self):
+        settings = load_all_settings()
+        cookie_hdr = self.build_session_cookie_header(settings, clear=True)
+        self.send_json({"ok": True}, 200, extra_headers={"Set-Cookie": cookie_hdr})
+
+    def handle_rotate_token(self):
+        new_token = secrets.token_urlsafe(18)
+        conn = get_db()
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('access_token', ?)",
+            (new_token,),
+        )
+        conn.commit()
+        conn.close()
+
+        settings = load_all_settings()
+        cookie_hdr = self.build_session_cookie_header(settings)
+        local_ip = get_local_ip()
+        port = self.server.server_address[1]
+        magic_lan_url = f"http://{local_ip}:{port}/?token={urllib.parse.quote(new_token)}"
+
+        self.send_json(
+            {
+                "ok": True,
+                "access_token": new_token,
+                "magic_lan_url": magic_lan_url,
+            },
+            200,
+            extra_headers={"Set-Cookie": cookie_hdr},
+        )
+
+    def handle_change_password(self):
+        data = self.read_json_body()
+        new_pw = str(data.get("password") or "").strip()
+        if len(new_pw) < 4:
+            return self.send_json(
+                {"error": "Passwort / PIN muss mindestens 4 Zeichen lang sein."}, 400
+            )
+
+        salt = secrets.token_hex(16)
+        pw_hash = hash_password(new_pw, salt)
+        conn = get_db()
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('auth_password_salt', ?)",
+            (salt,),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('auth_password_hash', ?)",
+            (pw_hash,),
+        )
+        conn.execute("DELETE FROM settings WHERE key = 'auth_initial_pin_hint'")
+        conn.commit()
+        conn.close()
+
+        settings = load_all_settings()
+        cookie_hdr = self.build_session_cookie_header(settings)
+        self.send_json({"ok": True}, 200, extra_headers={"Set-Cookie": cookie_hdr})
+
+    def handle_player_command(self):
+        if PLAYER_ENGINE is None:
+            return self.send_json({"error": "Server-Audio nicht initialisiert"}, 503)
+
+        data = self.read_json_body()
+        action = str(data.get("action") or "")
+        tracks, settings = load_tracks_and_settings()
+
+        if action == "trigger_cue":
+            track_id = int(data.get("track_id", 0))
+            cue_index = int(data.get("cue_index", 0))
+            active_category = str(data.get("active_category") or "all")
+            track = next((t for t in tracks if t["id"] == track_id), None)
+            if not track:
+                return self.send_json({"error": "Lied nicht gefunden"}, 404)
+            cues = track.get("cues") or []
+            cue = cues[cue_index] if 0 <= cue_index < len(cues) else None
+            PLAYER_ENGINE.trigger_cue(track, cue, settings, active_category=active_category)
+        elif action == "toggle_play_pause":
+            PLAYER_ENGINE.toggle_play_pause(settings)
+        elif action == "fade_out":
+            PLAYER_ENGINE.fade_out(settings, advance_to_next=False)
+        elif action == "stop":
+            PLAYER_ENGINE.stop_immediate()
+        elif action == "skip_next":
+            PLAYER_ENGINE.skip_next(settings)
+        elif action == "seek":
+            PLAYER_ENGINE.seek(float(data.get("time", 0.0)))
+        elif action == "talkover":
+            active_val = data.get("active")
+            PLAYER_ENGINE.set_talkover(active_val if isinstance(active_val, bool) else None, settings)
+        elif action == "volume":
+            vol = max(0.0, min(1.0, float(data.get("master_volume", 0.85))))
+            PLAYER_ENGINE.master_volume = vol
+            if data.get("persist"):
+                conn = get_db()
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES ('master_volume', ?)",
+                    (f"{vol:.2f}",),
+                )
+                conn.commit()
+                conn.close()
+        else:
+            return self.send_json({"error": f"Unbekannte Aktion: {action}"}, 400)
+
+        self.send_json({"ok": True, "player_status": PLAYER_ENGINE.get_status()})
+
+    def handle_update_settings(self):
+        data = self.read_json_body()
+        forbidden = INTERNAL_SECRET_KEYS | {"access_token", "auth_initial_pin_hint"}
+        conn = get_db()
+        for k, v in data.items():
+            if str(k) in forbidden:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (str(k), str(v)),
+            )
+        conn.commit()
+        conn.close()
+
+        settings = load_all_settings()
+        if PLAYER_ENGINE:
+            PLAYER_ENGINE.sync_settings(settings)
+        cookie_hdr = self.build_session_cookie_header(settings)
+        self.send_json({"ok": True}, 200, extra_headers={"Set-Cookie": cookie_hdr})
+
+    def handle_import(self):
+        data = self.read_json_body()
+        forbidden = INTERNAL_SECRET_KEYS | {"access_token", "auth_initial_pin_hint"}
+        conn = get_db()
+        for k, v in (data.get("settings") or {}).items():
+            if str(k) in forbidden:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (str(k), str(v)),
+            )
+        conn.commit()
+        conn.close()
+        if PLAYER_ENGINE:
+            tracks, settings = load_tracks_and_settings()
+            PLAYER_ENGINE.sync_settings(settings)
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+        self.send_json({"ok": True})
+
+
+def run_server(port: int = 8080):
+    global PLAYER_ENGINE
+    init_db()
+    local_ip = get_local_ip()
+    settings = load_all_settings()
+    PLAYER_ENGINE = ServerAudioEngine(UPLOADS_DIR, load_tracks_and_settings)
+    PLAYER_ENGINE.sync_settings(settings)
+
+    token = settings.get("access_token", "")
+    pin_hint = settings.get("auth_initial_pin_hint")
+    server = ThreadingHTTPServer(("0.0.0.0", port), ArenaDJRequestHandler)
+    print("=" * 72)
+    print("🎧 ARENA DJ SOUNDBOARD SERVER GESTARTET (ZUGRIFFSSCHUTZ & LIVE-MIXER)")
+    print("=" * 72)
+    print(f"💻 Auf diesem PC:             http://localhost:{port}")
+    print(f"🔒 WLAN mit Passwort/PIN:     http://{local_ip}:{port}")
+    print(f"🔑 Geheimer iPad-Direktlink:  http://{local_ip}:{port}/?token={token}")
+    if pin_hint:
+        print(f"📌 Start-PIN (änderbar):      {pin_hint}")
+    else:
+        print("📌 Passwort / PIN:            Eigenes Passwort aktiv")
+    print("=" * 72)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        if PLAYER_ENGINE:
+            PLAYER_ENGINE.stop_immediate()
+        print("\nServer beendet.")
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "8080"))
+    run_server(port)
