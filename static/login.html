@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Arena DJ" />
-  <title>🔒 Arena DJ – Geschützter Bereich</title>
+  <title>🔒 Arena DJ</title>
   <style>
     :root {
       --bg-main: #0b0f19;
@@ -30,6 +30,7 @@
       padding: 20px;
     }
     .login-card {
+      position: relative;
       width: 100%;
       max-width: 420px;
       background: var(--bg-panel);
@@ -38,6 +39,28 @@
       padding: 32px 26px;
       box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
       text-align: center;
+    }
+    .login-lang-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .login-lang-btn {
+      width: auto;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      background: var(--bg-input);
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .login-lang-btn.active {
+      background: var(--accent-orange);
+      border-color: var(--accent-orange);
+      color: #fff;
     }
     .lock-icon {
       width: 64px;
@@ -83,7 +106,7 @@
     input[type="password"]:focus {
       border-color: var(--accent-orange);
     }
-    button {
+    button.submit-btn {
       width: 100%;
       padding: 14px;
       border-radius: 12px;
@@ -95,9 +118,9 @@
       cursor: pointer;
       transition: background 0.15s, transform 0.1s;
     }
-    button:hover { background: #ea580c; }
-    button:active { transform: scale(0.98); }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.submit-btn:hover { background: #ea580c; }
+    button.submit-btn:active { transform: scale(0.98); }
+    button.submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .error-msg {
       background: rgba(239, 68, 68, 0.16);
       border: 1px solid rgba(239, 68, 68, 0.45);
@@ -114,11 +137,17 @@
     }
   </style>
 </head>
-<body>
+<body data-server-lang="de">
   <div class="login-card">
+    <div class="login-lang-row">
+      <button type="button" class="login-lang-btn" data-lang="de">DE</button>
+      <button type="button" class="login-lang-btn" data-lang="en">EN</button>
+      <button type="button" class="login-lang-btn" data-lang="fr">FR</button>
+    </div>
+
     <div class="lock-icon">🔒</div>
-    <h1>ARENA DJ GESPERRT</h1>
-    <p class="sub">Diese Wettkampf-Musiksteuerung ist geschützt. Bitte gib das Passwort / die PIN ein oder nutze den geheimen Direktlink.</p>
+    <h1 id="loginTitle">ARENA DJ GESPERRT</h1>
+    <p class="sub" id="loginSub">Diese Wettkampf-Musiksteuerung ist geschützt. Bitte gib das Passwort / die PIN ein oder nutze den geheimen Direktlink.</p>
 
     <form id="loginForm">
       <div class="error-msg" id="errorMsg"></div>
@@ -130,25 +159,86 @@
         autofocus
         required
       />
-      <button type="submit" id="submitBtn">🔓 Entsperren & Verbinden</button>
+      <button type="submit" class="submit-btn" id="submitBtn">🔓 Entsperren & Verbinden</button>
     </form>
 
-    <div class="hint">
-      Den geheimen Direktlink & das Passwort findest du am Hauptrechner unter <strong>⚙️ Setup / WLAN</strong>.
+    <div class="hint" id="loginHint">
+      Den geheimen Direktlink & das Passwort findest du am Hauptrechner in den Einstellungen (⚙️).
     </div>
   </div>
 
   <script>
+    const LOGIN_STRINGS = {
+      de: {
+        page_title: "🔒 Arena DJ – Geschützter Bereich",
+        title: "ARENA DJ GESPERRT",
+        sub: "Diese Wettkampf-Musiksteuerung ist geschützt. Bitte gib das Passwort / die PIN ein oder nutze den geheimen Direktlink.",
+        ph: "Passwort / PIN eingeben",
+        btn: "🔓 Entsperren & Verbinden",
+        checking: "Prüfe Zugang...",
+        hint: "Den geheimen Direktlink & das Passwort findest du am Hauptrechner in den Einstellungen (⚙️).",
+        wrong: "Falsches Passwort / PIN.",
+        conn_err: "Verbindungsfehler zum Server.",
+      },
+      en: {
+        page_title: "🔒 Arena DJ – Protected Access",
+        title: "ARENA DJ LOCKED",
+        sub: "This competition music controller is protected. Please enter the password / PIN or scan the secret QR link.",
+        ph: "Enter password / PIN",
+        btn: "🔓 Unlock & Connect",
+        checking: "Verifying access...",
+        hint: "You can find the secret QR link & password on the main computer in Settings (⚙️).",
+        wrong: "Invalid password / PIN.",
+        conn_err: "Server connection error.",
+      },
+      fr: {
+        page_title: "🔒 Arena DJ – Accès protégé",
+        title: "ARENA DJ VERROUILLÉ",
+        sub: "Cette régie musicale de compétition est protégée. Veuillez saisir le mot de passe / PIN ou scanner le QR code secret.",
+        ph: "Saisir le mot de passe / PIN",
+        btn: "🔓 Déverrouiller & Connecter",
+        checking: "Vérification...",
+        hint: "Vous trouverez le QR code secret et le mot de passe sur l'ordinateur principal dans les Paramètres (⚙️).",
+        wrong: "Mot de passe / code PIN incorrect.",
+        conn_err: "Erreur de connexion au serveur.",
+      },
+    };
+
+    let lang = localStorage.getItem("arena_dj_lang") || document.body.dataset.serverLang || "de";
+    if (!LOGIN_STRINGS[lang]) lang = "de";
+
     const form = document.getElementById("loginForm");
     const errEl = document.getElementById("errorMsg");
     const btn = document.getElementById("submitBtn");
     const input = document.getElementById("passwordInput");
 
+    function applyLoginLang(nextLang) {
+      lang = LOGIN_STRINGS[nextLang] ? nextLang : "de";
+      localStorage.setItem("arena_dj_lang", lang);
+      const s = LOGIN_STRINGS[lang];
+      document.documentElement.lang = lang;
+      document.title = s.page_title;
+      document.getElementById("loginTitle").textContent = s.title;
+      document.getElementById("loginSub").textContent = s.sub;
+      input.placeholder = s.ph;
+      btn.textContent = s.btn;
+      document.getElementById("loginHint").textContent = s.hint;
+      document.querySelectorAll(".login-lang-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.lang === lang);
+      });
+    }
+
+    document.querySelectorAll(".login-lang-btn").forEach((b) => {
+      b.addEventListener("click", () => applyLoginLang(b.dataset.lang));
+    });
+    applyLoginLang(lang);
+
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+      const s = LOGIN_STRINGS[lang];
       errEl.style.display = "none";
       btn.disabled = true;
-      btn.textContent = "Prüfe Zugang...";
+      btn.textContent = s.checking;
 
       try {
         const res = await fetch("/api/auth/login", {
@@ -161,15 +251,15 @@
           window.location.replace("/");
           return;
         }
-        errEl.textContent = data.error || "Falsches Passwort / PIN.";
+        errEl.textContent = res.status === 401 ? s.wrong : (data.error || s.wrong);
         errEl.style.display = "block";
         input.select();
       } catch (err) {
-        errEl.textContent = "Verbindungsfehler zum Server.";
+        errEl.textContent = s.conn_err;
         errEl.style.display = "block";
       } finally {
         btn.disabled = false;
-        btn.textContent = "🔓 Entsperren & Verbinden";
+        btn.textContent = LOGIN_STRINGS[lang].btn;
       }
     });
   </script>

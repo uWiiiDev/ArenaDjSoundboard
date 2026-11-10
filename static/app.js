@@ -18,6 +18,7 @@ const state = {
     auto_next_enabled: true,
     crossfade_enabled: true,
     view_mode: "grid",
+    language: getLang(),
     panel_order: localStorage.getItem("arena_dj_panel_order") || "songs,fader,deck",
   },
   serverInfo: {
@@ -183,14 +184,15 @@ function applyEffectiveVolume() {
   }
   const infoEl = document.getElementById("effectiveVolInfo");
   if (infoEl) {
+    const outPct = Math.round(master * duckFactor * 100);
     if (state.isTalkoverActive) {
-      infoEl.textContent = `🎤 Durchsage aktiv – gedämpft (${displayPct}%)`;
+      infoEl.textContent = t("eff_talkover", { pct: displayPct });
     } else if (state.isFadingOut) {
-      infoEl.textContent = `📉 Blendet sanft aus... (${displayPct}%)`;
+      infoEl.textContent = t("eff_fading_out", { pct: displayPct });
     } else if (state.isCrossfading) {
-      infoEl.textContent = `🔀 Crossfade zum nächsten Lied (${Math.round(master * duckFactor * 100)}%)`;
+      infoEl.textContent = t("eff_crossfading", { pct: outPct });
     } else {
-      infoEl.textContent = `Ausgangspegel: ${Math.round(master * duckFactor * 100)}%`;
+      infoEl.textContent = t("eff_output", { pct: outPct });
     }
   }
 }
@@ -339,7 +341,7 @@ function applyServerPlayerStatus(ps) {
   const mobTalk = document.getElementById("mobTalkoverBtn");
   if (btnTalk && badgeTalk) {
     btnTalk.classList.toggle("active", state.isTalkoverActive);
-    badgeTalk.textContent = state.isTalkoverActive ? "AKTIV" : "AUS";
+    badgeTalk.textContent = state.isTalkoverActive ? t("badge_on") : t("badge_off");
   }
   if (mobTalk) {
     mobTalk.classList.toggle("active", state.isTalkoverActive);
@@ -353,13 +355,13 @@ function applyServerPlayerStatus(ps) {
   const infoEl = document.getElementById("effectiveVolInfo");
   if (infoEl) {
     if (state.isTalkoverActive) {
-      infoEl.textContent = `🎤 Server-Durchsage aktiv (${state.serverEffectivePct}%)`;
+      infoEl.textContent = t("srv_eff_talkover", { pct: state.serverEffectivePct });
     } else if (state.isFadingOut) {
-      infoEl.textContent = `📉 Server blendet aus... (${state.serverEffectivePct}%)`;
+      infoEl.textContent = t("srv_eff_fading_out", { pct: state.serverEffectivePct });
     } else if (state.isCrossfading) {
-      infoEl.textContent = `🔀 Server-Crossfade läuft (${state.serverEffectivePct}%)`;
+      infoEl.textContent = t("srv_eff_crossfading", { pct: state.serverEffectivePct });
     } else {
-      infoEl.textContent = `🔊 Server-Pegel: ${state.serverEffectivePct}%`;
+      infoEl.textContent = t("srv_eff_output", { pct: state.serverEffectivePct });
     }
   }
 
@@ -444,7 +446,10 @@ async function tryRestoreLocalPlayback() {
       // Falls iOS Safari 1 Fingertipp verlangt -> grünen Sofort-Fortsetzen-Banner einblenden!
       const banner = document.getElementById("localResumeBanner");
       const txt = document.getElementById("localResumeText");
-      txt.textContent = `▶️ „${track.title}“ lief vor dem Neuladen (${formatTime(targetPos)}) – 1× tippen zum Weiterhören!`;
+      txt.textContent = t("resume_dynamic", {
+        title: track.title,
+        time: formatTime(targetPos),
+      });
       banner.classList.remove("hidden");
     } else {
       state.pendingResumeSnapshot = null;
@@ -544,7 +549,7 @@ async function triggerTrackCue(track, cue, options = {}) {
   state.currentTrack = track;
   state.currentCue = cue || {
     id: null,
-    label: "▶ Ab Anfang",
+    label: t("np_from_start_cue"),
     start_time: 0,
     end_time: null,
   };
@@ -744,10 +749,10 @@ function toggleTalkover() {
   const mobTalk = document.getElementById("mobTalkoverBtn");
   if (state.isTalkoverActive) {
     btn.classList.add("active");
-    badge.textContent = "AKTIV";
+    badge.textContent = t("badge_on");
   } else {
     btn.classList.remove("active");
-    badge.textContent = "AUS";
+    badge.textContent = t("badge_off");
   }
   if (mobTalk) mobTalk.classList.toggle("active", state.isTalkoverActive);
 
@@ -886,6 +891,13 @@ async function loadStateFromServer() {
     state.settings.auto_next_enabled = data.settings.auto_next_enabled !== "false";
     state.settings.crossfade_enabled = data.settings.crossfade_enabled !== "false";
     state.settings.view_mode = data.settings.view_mode === "list" ? "list" : "grid";
+    if (data.settings.language && data.settings.language !== getLang()) {
+      setLangCode(data.settings.language);
+      state.settings.language = getLang();
+      applyStaticTranslations();
+    } else {
+      state.settings.language = getLang();
+    }
     if (data.settings.panel_order) {
       state.settings.panel_order = data.settings.panel_order;
       localStorage.setItem("arena_dj_panel_order", data.settings.panel_order);
@@ -966,10 +978,26 @@ function syncControlsWithSettings() {
   document.getElementById("crossfadeToggle").checked = state.settings.crossfade_enabled;
   document.getElementById("autoFadeInfo").textContent = `${state.settings.fade_in_duration}s`;
   document.getElementById("crossfadeInfo").textContent = `${state.settings.crossfade_duration}s`;
-  document.getElementById("fadeOutSubLabel").textContent = `${state.settings.fade_out_duration}s Fade-Out`;
-  document.getElementById("talkoverDesc").textContent = `Musik sanft auf ${Math.round(
-    state.settings.ducking_volume * 100
-  )}% absenken`;
+  document.getElementById("fadeOutSubLabel").textContent = t("fade_out_sub", {
+    sec: state.settings.fade_out_duration,
+  });
+  document.getElementById("talkoverDesc").textContent = t("talkover_desc", {
+    pct: Math.round(state.settings.ducking_volume * 100),
+  });
+  const badgeTalk = document.getElementById("talkoverBadge");
+  if (badgeTalk) {
+    badgeTalk.textContent = state.isTalkoverActive ? t("badge_on") : t("badge_off");
+  }
+  const autoFollowBtn = document.getElementById("autoFollowBtn");
+  if (autoFollowBtn) {
+    autoFollowBtn.title = state.autoFollowEnabled
+      ? t("autofollow_on_title")
+      : t("autofollow_off_title");
+  }
+
+  document.querySelectorAll("[data-lang-select]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.langSelect === getLang());
+  });
 
   if (!isServerMode()) {
     applyEffectiveVolume();
@@ -1024,11 +1052,12 @@ function renderCategories() {
   }
 
   const totalCount = state.tracks.length;
-  let html = `<option value="all">🏆 Alle Lieder (${totalCount})</option>`;
+  let html = `<option value="all">${escapeHtml(t("cat_all"))} (${totalCount})</option>`;
 
   for (const cat of state.categories) {
     const count = state.tracks.filter((t) => t.category_id === cat.id).length;
-    html += `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.icon)} ${escapeHtml(cat.name)} (${count})</option>`;
+    const catLabel = getCategoryDisplayName(cat);
+    html += `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.icon)} ${escapeHtml(catLabel)} (${count})</option>`;
   }
 
   if (select.dataset.renderedHtml !== html) {
@@ -1065,9 +1094,9 @@ function renderSoundboard() {
   if (tracks.length === 0) {
     grid.innerHTML = `
       <div class="track-card" style="grid-column: 1 / -1; text-align: center; padding: 36px;">
-        <h3>Keine Lieder in dieser Ansicht gefunden</h3>
+        <h3>${escapeHtml(t("empty_tracks_title"))}</h3>
         <p style="color: var(--text-muted); margin-top: 6px;">
-          Ziehe MP3-Dateien einfach per Drag &amp; Drop hierher oder nutze den Upload-Button oben rechts.
+          ${escapeHtml(t("empty_tracks_sub"))}
         </p>
       </div>
     `;
@@ -1089,7 +1118,11 @@ function renderSoundboard() {
               cue.id &&
               state.currentCue.id === cue.id;
             const bg = cue.color || track.color || "#f97316";
-            const tip = `${idx + 1}: ${cue.label} (ab ${formatTime(cue.start_time)})`;
+            const tip = t("cue_btn_tip", {
+              num: idx + 1,
+              label: cue.label,
+              time: formatTime(cue.start_time),
+            });
             return `
               <button
                 type="button"
@@ -1106,12 +1139,13 @@ function renderSoundboard() {
           .join("");
 
         const mainColor = track.color || "#f97316";
+        const loopTip = track.loop ? t("loop_active_title") : t("loop_inactive_title");
         return `
           <div class="track-list-row ${isTrackPlaying ? "is-playing" : ""}" data-track-id="${track.id}">
             <div class="list-track-main">
               ${
                 canDragTracks
-                  ? `<span class="track-drag-handle" title="Gedrückt halten & ziehen zum Umsortieren">⠿</span>`
+                  ? `<span class="track-drag-handle" title="${escapeHtml(t("track_drag_title"))}">⠿</span>`
                   : ""
               }
               <button
@@ -1120,13 +1154,13 @@ function renderSoundboard() {
                 style="background: ${mainColor};"
                 data-track-id="${track.id}"
                 data-cue-index="-1"
-                title="Lied ab Anfang (0:00) starten"
+                title="${escapeHtml(t("play_from_start_title"))}"
               >
                 ${isTrackPlaying ? "🔊" : "▶"}
               </button>
               <div class="list-title-block">
                 <div class="list-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</div>
-                <div class="list-sub">${escapeHtml(track.artist || "Wettkampf-Track")} • ${formatTime(track.duration)}</div>
+                <div class="list-sub">${escapeHtml(track.artist || t("default_artist"))} • ${formatTime(track.duration)}</div>
               </div>
             </div>
 
@@ -1139,12 +1173,12 @@ function renderSoundboard() {
                 type="button"
                 class="btn-loop-toggle ${track.loop ? "active" : ""}"
                 data-toggle-loop="${track.id}"
-                title="${track.loop ? "Endlosschleife aktiv (Ein/Aus)" : "Als Endlosschleife markieren (Ein/Aus)"}"
-                aria-label="Endlosschleife"
+                title="${escapeHtml(loopTip)}"
+                aria-label="${escapeHtml(t("loop_aria"))}"
               >
                 🔁
               </button>
-              <button type="button" class="btn-edit-cues" data-edit-track="${track.id}" title="Highlights & Wellenform bearbeiten" aria-label="Highlights bearbeiten">
+              <button type="button" class="btn-edit-cues" data-edit-track="${track.id}" title="${escapeHtml(t("edit_cues_title"))}" aria-label="${escapeHtml(t("edit_cues_title"))}">
                 ✂️
               </button>
             </div>
@@ -1167,7 +1201,11 @@ function renderSoundboard() {
               cue.id &&
               state.currentCue.id === cue.id;
             const bg = cue.color || track.color || "#f97316";
-            const tip = `${idx + 1}: ${cue.label} (ab ${formatTime(cue.start_time)})`;
+            const tip = t("cue_btn_tip", {
+              num: idx + 1,
+              label: cue.label,
+              time: formatTime(cue.start_time),
+            });
 
             return `
               <button
@@ -1185,12 +1223,13 @@ function renderSoundboard() {
           .join("");
 
         const mainColor = track.color || "#f97316";
+        const loopTip = track.loop ? t("loop_active_title") : t("loop_inactive_title");
         return `
           <article class="track-card ${isTrackPlaying ? "is-playing" : ""}" data-track-id="${track.id}">
             <div class="track-card-header">
               ${
                 canDragTracks
-                  ? `<span class="track-drag-handle" title="Gedrückt halten & ziehen zum Umsortieren">⠿</span>`
+                  ? `<span class="track-drag-handle" title="${escapeHtml(t("track_drag_title"))}">⠿</span>`
                   : ""
               }
               <button
@@ -1199,14 +1238,14 @@ function renderSoundboard() {
                 style="background: ${mainColor};"
                 data-track-id="${track.id}"
                 data-cue-index="-1"
-                title="Lied ab Anfang (0:00) starten"
+                title="${escapeHtml(t("play_from_start_title"))}"
               >
                 ${isTrackPlaying ? "🔊" : "▶"}
               </button>
               <div class="track-title-wrap">
                 <div class="track-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</div>
                 <div class="track-meta-sub">
-                  <span>${escapeHtml(track.artist || "Wettkampf-Track")}</span>
+                  <span>${escapeHtml(track.artist || t("default_artist"))}</span>
                   <span>• ${formatTime(track.duration)}</span>
                 </div>
               </div>
@@ -1215,18 +1254,18 @@ function renderSoundboard() {
                   type="button"
                   class="btn-loop-toggle ${track.loop ? "active" : ""}"
                   data-toggle-loop="${track.id}"
-                  title="${track.loop ? "Endlosschleife aktiv (Ein/Aus)" : "Als Endlosschleife markieren (Ein/Aus)"}"
-                  aria-label="Endlosschleife"
+                  title="${escapeHtml(loopTip)}"
+                  aria-label="${escapeHtml(t("loop_aria"))}"
                 >
                   🔁
                 </button>
-                <button type="button" class="btn-edit-cues" data-edit-track="${track.id}" title="Highlights & Wellenform bearbeiten" aria-label="Highlights bearbeiten">
+                <button type="button" class="btn-edit-cues" data-edit-track="${track.id}" title="${escapeHtml(t("edit_cues_title"))}" aria-label="${escapeHtml(t("edit_cues_title"))}">
                   ✂️
                 </button>
               </div>
             </div>
 
-            <div class="card-waveform-wrap" data-edit-track="${track.id}" title="Highlights & Wellenform öffnen">
+            <div class="card-waveform-wrap" data-edit-track="${track.id}" title="${escapeHtml(t("edit_waveform_title"))}">
               <canvas class="card-waveform-canvas" id="cardWf_${track.id}" width="320" height="44"></canvas>
             </div>
 
@@ -1359,10 +1398,10 @@ function updatePlayerUI() {
 
   if (hasTrack && state.currentTrack.loop) {
     btnNpLoop.classList.add("active");
-    btnNpLoop.textContent = "🔁 Endlos: AN";
+    btnNpLoop.textContent = t("np_loop_on");
   } else {
     btnNpLoop.classList.remove("active");
-    btnNpLoop.textContent = "🔁 Endlos: AUS";
+    btnNpLoop.textContent = t("np_loop_off");
   }
 
   if (state.isPlaying) {
@@ -1371,19 +1410,19 @@ function updatePlayerUI() {
     deckDot.className =
       "deck-status-dot " + (state.isFadingOut || state.isCrossfading ? "fading" : "playing");
     deckStatusText.textContent = state.isFadingOut
-      ? "Blendet sanft aus..."
+      ? t("deck_fading")
       : state.isCrossfading
-      ? "🔀 Überblendung ins nächste Lied..."
-      : "Läuft gerade in der Halle";
+      ? t("deck_crossfading")
+      : t("deck_playing");
     playPauseIcon.textContent = "⏸";
-    playPauseLabel.textContent = "PAUSE";
+    playPauseLabel.textContent = t("play_pause");
   } else {
     onAirBadge.textContent = "OFF AIR";
     onAirBadge.classList.remove("on-air");
     deckDot.className = "deck-status-dot";
-    deckStatusText.textContent = hasTrack ? "Pausiert / Bereit" : "Bereit für nächsten Einsatz";
+    deckStatusText.textContent = hasTrack ? t("deck_paused") : t("deck_ready");
     playPauseIcon.textContent = "▶";
-    playPauseLabel.textContent = "WEITER";
+    playPauseLabel.textContent = hasTrack ? t("play_resume") : t("play_start");
   }
 
   const npNextRow = document.getElementById("npNextRow");
@@ -1413,38 +1452,46 @@ function updatePlayerUI() {
 
   if (state.currentTrack) {
     npTitle.textContent = state.currentTrack.title;
-    npCue.textContent = state.currentCue
-      ? `Aktives Highlight: ${state.currentCue.label} (${formatTime(state.currentCue.start_time)})`
-      : "Ab Anfang";
+    npCue.textContent =
+      state.currentCue && state.currentCue.id
+        ? t("np_active_cue", {
+            label: state.currentCue.label,
+            time: formatTime(state.currentCue.start_time),
+          })
+        : t("np_from_start");
 
     if (mobTitle) mobTitle.textContent = state.currentTrack.title;
     if (mobSub) {
-      const modeTag = isServerMode() ? "🔊 Server" : "📱 Gerät";
+      const modeTag = isServerMode() ? t("mob_mode_server") : t("mob_mode_local");
       mobSub.textContent = state.isPlaying
         ? `${modeTag} • ${formatTime(curTime)} / ${formatTime(state.currentTrack.duration)}`
-        : `${modeTag} • Pausiert`;
+        : `${modeTag} • ${t("mob_paused")}`;
     }
 
     if (npNextRow && npNextText) {
       npNextRow.classList.remove("hidden");
       if (state.currentTrack.loop) {
-        npNextText.textContent = "🔁 Endlosschleife aktiv (wiederholt diesen Titel)";
+        npNextText.textContent = t("np_next_loop");
       } else if (state.settings.auto_next_enabled) {
         const nextT = getNextTrack();
-        const modeIcon = state.settings.crossfade_enabled ? "🔀 Crossfade" : "⏭ Danach";
+        const modeIcon = state.settings.crossfade_enabled
+          ? t("np_next_xfade")
+          : t("np_next_after");
         npNextText.textContent = nextT
           ? `${modeIcon}: ${nextT.title}`
-          : "⏭ Danach: –";
+          : `${t("np_next_after")}: –`;
       } else {
-        npNextText.textContent = "⏹ Stoppt am Liedende";
+        npNextText.textContent = t("np_next_stop");
       }
     }
 
     drawNowPlayingWaveform(curTime, state.currentTrack.duration || 1);
   } else {
+    npTitle.textContent = t("np_no_track");
+    npCue.textContent = t("np_tap_hint");
     if (npNextRow) npNextRow.classList.add("hidden");
-    if (mobTitle) mobTitle.textContent = "Kein Lied geladen";
-    if (mobSub) mobSub.textContent = isServerMode() ? "🔊 Server bereit" : "📱 Gerät bereit";
+    if (mobTitle) mobTitle.textContent = t("np_no_track");
+    if (mobSub) mobSub.textContent = isServerMode() ? t("mob_ready_server") : t("mob_ready_local");
   }
 }
 
@@ -1526,7 +1573,9 @@ function openCueEditor(trackId) {
   state.editorCursorTime =
     track.cues && track.cues.length > 0 ? Number(track.cues[0].start_time) : 0.0;
 
-  document.getElementById("editorTrackTitle").textContent = `✂️ Highlights & Waveform: ${track.title}`;
+  document.getElementById("editorTrackTitle").textContent = t("editor_title_prefix", {
+    title: track.title,
+  });
   document.getElementById("editTrackName").value = track.title;
   document.getElementById("editTrackArtist").value = track.artist || "";
   document.getElementById("editTrackVolume").value = Math.round((track.volume || 1.0) * 100);
@@ -1538,7 +1587,7 @@ function openCueEditor(trackId) {
       (c) =>
         `<option value="${escapeHtml(c.id)}" ${
           c.id === track.category_id ? "selected" : ""
-        }>${escapeHtml(c.icon)} ${escapeHtml(c.name)}</option>`
+        }>${escapeHtml(c.icon)} ${escapeHtml(getCategoryDisplayName(c))}</option>`
     )
     .join("");
 
@@ -1571,7 +1620,9 @@ function updateEditorTimeDisplay(duration) {
     document.getElementById("editorTotalTime").textContent = formatTime(duration, true);
   }
   const playBtn = document.getElementById("editorPlayPauseBtn");
-  playBtn.textContent = editorAudio.paused ? "▶ Hier vorhören" : "⏸ Vorhören stoppen";
+  playBtn.textContent = editorAudio.paused
+    ? t("editor_preview_play")
+    : t("editor_preview_stop");
 }
 
 function drawEditorWaveform(track) {
@@ -1641,7 +1692,9 @@ function renderEditorCuesList(track) {
   const cues = track.cues || [];
 
   if (cues.length === 0) {
-    container.innerHTML = `<p style="color: var(--text-muted);">Noch keine Highlights angelegt. Tippe oben auf „📍 Aktuelle Position als Highlight anlegen“.</p>`;
+    container.innerHTML = `<p style="color: var(--text-muted);">${escapeHtml(
+      t("editor_no_cues")
+    )}</p>`;
     return;
   }
 
@@ -1649,39 +1702,53 @@ function renderEditorCuesList(track) {
     .map(
       (cue, idx) => `
       <div class="cue-edit-row" data-cue-id="${cue.id}">
-        <input type="color" class="cue-color-picker" value="${escapeHtml(cue.color || "#f97316")}" title="Farbe für Button ${idx + 1}" />
+        <input type="color" class="cue-color-picker" value="${escapeHtml(
+          cue.color || "#f97316"
+        )}" title="${escapeHtml(t("cue_color_title", { num: idx + 1 }))}" />
 
         <div class="form-group">
-          <label>Button <strong>#${idx + 1}</strong> – Notiz / Bezeichnung</label>
-          <input type="text" class="cue-label-input" value="${escapeHtml(cue.label)}" placeholder="z. B. Refrain / Drop" />
+          <label>${escapeHtml(t("cue_btn_label_prefix"))} <strong>#${idx + 1}</strong> ${escapeHtml(
+        t("cue_btn_label_suffix")
+      )}</label>
+          <input type="text" class="cue-label-input" value="${escapeHtml(
+            cue.label
+          )}" placeholder="${escapeHtml(t("cue_label_ph"))}" />
         </div>
 
         <div class="form-group">
-          <label>Startzeit (Sekunden)</label>
+          <label>${escapeHtml(t("cue_start_label"))}</label>
           <div class="cue-time-group">
             <button type="button" class="btn-nudge" data-nudge="-0.5">-0.5s</button>
-            <input type="number" class="cue-start-input" step="0.1" min="0" value="${Number(cue.start_time).toFixed(1)}" />
+            <input type="number" class="cue-start-input" step="0.1" min="0" value="${Number(
+              cue.start_time
+            ).toFixed(1)}" />
             <button type="button" class="btn-nudge" data-nudge="0.5">+0.5s</button>
-            <button type="button" class="btn-nudge" data-use-cursor="1" title="Aktuelle Wellenform-Position übernehmen">📍</button>
+            <button type="button" class="btn-nudge" data-use-cursor="1" title="${escapeHtml(
+              t("cue_use_cursor_title")
+            )}">📍</button>
           </div>
         </div>
 
         <div class="form-group">
-          <label>Optionales Ende (Sek.)</label>
-          <input type="number" class="cue-end-input" step="0.5" min="0" placeholder="Bis Liedende" value="${
-            cue.end_time ? Number(cue.end_time).toFixed(1) : ""
-          }" />
+          <label>${escapeHtml(t("cue_end_label"))}</label>
+          <input type="number" class="cue-end-input" step="0.5" min="0" placeholder="${escapeHtml(
+            t("cue_end_ph")
+          )}" value="${cue.end_time ? Number(cue.end_time).toFixed(1) : ""}" />
         </div>
 
-        <label class="toggle-row" title="Sanft einblenden oder sofort mit 100% Lautstärke starten">
+        <label class="toggle-row" title="${escapeHtml(t("cue_fade_title"))}">
           <input type="checkbox" class="cue-fade-input" ${cue.fade_in ? "checked" : ""} />
-          <span>Fade-In</span>
+          <span>${escapeHtml(t("cue_fade_label"))}</span>
         </label>
 
         <div style="display: flex; gap: 6px;">
-          <button type="button" class="btn btn-secondary btn-test-cue" title="Ab diesem Highlight vorhören">▶ Test</button>
+          <button type="button" class="btn btn-secondary btn-test-cue" title="${escapeHtml(
+            t("cue_test_title")
+          )}">${escapeHtml(t("cue_test_btn"))}</button>
           <button type="button" class="btn btn-primary btn-save-cue">💾</button>
-          <button type="button" class="btn btn-danger btn-del-cue" title="Highlight löschen">🗑️</button>
+          <button type="button" class="btn btn-danger btn-del-cue" title="${escapeHtml(
+            t("cue_del_title")
+          )}">🗑️</button>
         </div>
       </div>
     `
@@ -1799,6 +1866,7 @@ function generateFallbackPeaks(len) {
 // INITIALISIERUNG & EVENT LISTENER
 // ============================================================================
 document.addEventListener("DOMContentLoaded", () => {
+  applyStaticTranslations();
   loadStateFromServer();
   requestAnimationFrame(updateLiveLoop);
   setInterval(pollServerPlayerStatus, 250);
@@ -1808,7 +1876,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!isServerMode() && state.isPlaying && !state.manualStopOrFade) {
       saveLocalPlaybackSnapshot();
       e.preventDefault();
-      e.returnValue = "Musik läuft gerade live (ON AIR)!";
+      e.returnValue = t("beforeunload_msg");
       return e.returnValue;
     }
   });
@@ -1851,8 +1919,8 @@ document.addEventListener("DOMContentLoaded", () => {
       state.autoFollowEnabled = !state.autoFollowEnabled;
       autoFollowBtn.classList.toggle("active", state.autoFollowEnabled);
       autoFollowBtn.title = state.autoFollowEnabled
-        ? "Auto-Mitlauf aktiv: Liste läuft bei Liedwechsel automatisch zum aktiven Titel mit"
-        : "Auto-Mitlauf deaktiviert (manuelles Scrollen)";
+        ? t("autofollow_on_title")
+        : t("autofollow_off_title");
       if (state.autoFollowEnabled) {
         scrollActiveTrackIntoView(true);
       }
@@ -2070,7 +2138,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // ==========================================================================
   async function saveEditorTrackMetadata() {
     if (!state.editingTrackId) return;
-    const title = document.getElementById("editTrackName").value.trim() || "Unbenannt";
+    const title = document.getElementById("editTrackName").value.trim() || t("unnamed_track");
     const artist = document.getElementById("editTrackArtist").value.trim();
     const category_id = document.getElementById("editTrackCategory").value;
     const volume = Math.max(
@@ -2214,7 +2282,13 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("deleteTrackBtn").addEventListener("click", async () => {
     if (!state.editingTrackId) return;
     const track = state.tracks.find((t) => t.id === state.editingTrackId);
-    if (!confirm(`Möchtest du „${track ? track.title : "dieses Lied"}“ wirklich dauerhaft löschen?`)) {
+    if (
+      !confirm(
+        t("confirm_delete_track", {
+          title: track ? track.title : t("unnamed_track"),
+        })
+      )
+    ) {
       return;
     }
     await fetch(`/api/tracks/${state.editingTrackId}`, { method: "DELETE" });
@@ -2286,10 +2360,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!hasFileTransfer(e)) return;
       e.preventDefault();
       const { cat, isAllFallback } = resolveDropCategory();
+      const catLabel = getCategoryDisplayName(cat);
       if (songsDropCatLabel) {
         songsDropCatLabel.textContent = isAllFallback
-          ? `Zuordnung zu Standard-Kategorie: ${cat.icon} ${cat.name}`
-          : `Wird zugeordnet zu: ${cat.icon} ${cat.name}`;
+          ? t("drop_sub_fallback", { icon: cat.icon, name: catLabel })
+          : t("drop_sub_assigned", { icon: cat.icon, name: catLabel });
       }
       songsDropOverlay.classList.remove("hidden");
     });
@@ -2321,24 +2396,25 @@ document.addEventListener("DOMContentLoaded", () => {
       );
 
       if (droppedFiles.length === 0) {
-        showInlineUploadBanner(
-          "⚠️ Keine Audio-Datei erkannt (bitte MP3, WAV, M4A, OGG oder FLAC hineinziehen).",
-          "error",
-          3500
-        );
+        showInlineUploadBanner(t("drop_err_no_audio"), "error", 3500);
         return;
       }
 
       const { cat } = resolveDropCategory();
+      const catLabel = getCategoryDisplayName(cat);
       const formData = new FormData();
       droppedFiles.forEach((file) => formData.append("files", file));
       formData.append("category_id", cat.id);
       formData.append("color", "#f97316");
 
       showInlineUploadBanner(
-        `⏳ Lade ${droppedFiles.length} ${
-          droppedFiles.length === 1 ? "Lied" : "Lieder"
-        } in „${cat.icon} ${cat.name}“ hoch & analysiere Wellenform...`,
+        droppedFiles.length === 1
+          ? t("drop_uploading_one", { icon: cat.icon, name: catLabel })
+          : t("drop_uploading_many", {
+              count: droppedFiles.length,
+              icon: cat.icon,
+              name: catLabel,
+            }),
         "loading"
       );
 
@@ -2352,15 +2428,19 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         await loadStateFromServer();
         showInlineUploadBanner(
-          `✅ ${droppedFiles.length} ${
-            droppedFiles.length === 1 ? "Lied" : "Lieder"
-          } zu „${cat.icon} ${cat.name}“ hinzugefügt!`,
+          droppedFiles.length === 1
+            ? t("drop_done_one", { icon: cat.icon, name: catLabel })
+            : t("drop_done_many", {
+                count: droppedFiles.length,
+                icon: cat.icon,
+                name: catLabel,
+              }),
           "done",
           3200
         );
       } catch (err) {
         showInlineUploadBanner(
-          `⚠️ Fehler beim Hochladen: ${err.message}`,
+          t("drop_err_upload", { err: err.message }),
           "error",
           4500
         );
@@ -2375,12 +2455,11 @@ document.addEventListener("DOMContentLoaded", () => {
         (c) =>
           `<option value="${escapeHtml(c.id)}" ${
             c.id === state.activeCategory ? "selected" : ""
-          }>${escapeHtml(c.icon)} ${escapeHtml(c.name)}</option>`
+          }>${escapeHtml(c.icon)} ${escapeHtml(getCategoryDisplayName(c))}</option>`
       )
       .join("");
     uploadFileInput.value = "";
-    document.getElementById("selectedFilesLabel").textContent =
-      "Mehrfachauswahl möglich (MP3, WAV, M4A, OGG)";
+    document.getElementById("selectedFilesLabel").textContent = t("dropzone_sub_default");
     document.getElementById("uploadProgressBox").classList.add("hidden");
     uploadModal.classList.remove("hidden");
   });
@@ -2398,7 +2477,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const names = Array.from(uploadFileInput.files)
         .map((f) => f.name)
         .join(", ");
-      document.getElementById("selectedFilesLabel").textContent = `${count} Datei(en) ausgewählt: ${names}`;
+      document.getElementById("selectedFilesLabel").textContent = t(
+        "dropzone_files_selected",
+        { count, names }
+      );
     }
   });
 
@@ -2424,7 +2506,7 @@ document.addEventListener("DOMContentLoaded", () => {
         openCueEditor(result.created_ids[0]);
       }
     } catch (err) {
-      alert("Fehler beim Hochladen: " + err.message);
+      alert(t("err_upload_alert", { err: err.message }));
     } finally {
       document.getElementById("submitUploadBtn").disabled = false;
       document.getElementById("uploadProgressBox").classList.add("hidden");
@@ -2432,7 +2514,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // ==========================================================================
-  // SETTINGS & WLAN MODAL EVENTS
+  // SETTINGS, SPRACHE & WLAN MODAL EVENTS
   // ==========================================================================
   const settingsModal = document.getElementById("settingsModal");
 
@@ -2442,10 +2524,12 @@ document.addEventListener("DOMContentLoaded", () => {
       .map(
         (c) => `
         <span class="settings-cat-pill">
-          <span>${escapeHtml(c.icon)} ${escapeHtml(c.name)}</span>
+          <span>${escapeHtml(c.icon)} ${escapeHtml(getCategoryDisplayName(c))}</span>
           ${
             c.id !== "action"
-              ? `<button type="button" data-del-cat="${escapeHtml(c.id)}" title="Kategorie löschen">✕</button>`
+              ? `<button type="button" data-del-cat="${escapeHtml(c.id)}" title="${escapeHtml(
+                  t("del_cat_title")
+                )}">✕</button>`
               : ""
           }
         </span>
@@ -2482,17 +2566,17 @@ document.addEventListener("DOMContentLoaded", () => {
     authLocalhostCb.checked = Boolean(state.authInfo.auth_require_on_localhost);
 
     if (isProtected) {
-      badge.textContent = "🔒 GESCHÜTZT";
+      badge.textContent = t("sec_protected");
       badge.classList.remove("off");
     } else {
-      badge.textContent = "🔓 OFFEN";
+      badge.textContent = t("sec_open");
       badge.classList.add("off");
     }
 
     if (state.authInfo.initial_pin_hint) {
-      pinBadge.textContent = `Aktuelle Start-PIN: ${state.authInfo.initial_pin_hint}`;
+      pinBadge.textContent = t("pin_initial", { pin: state.authInfo.initial_pin_hint });
     } else {
-      pinBadge.textContent = "✅ Eigenes Passwort / PIN aktiv";
+      pinBadge.textContent = t("pin_custom");
     }
   }
 
@@ -2508,14 +2592,43 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!badge || !details) return;
 
     if (state.systemVersion && state.systemVersion.git_available && state.systemVersion.local_short) {
-      badge.textContent = `Commit ${state.systemVersion.local_short}`;
-      details.textContent = `Installierter Stand: ${state.systemVersion.local_short} (${state.systemVersion.local_date || "lokal"}) – „${state.systemVersion.local_subject || ""}“. Lieder & Datenbank bleiben bei Updates unberührt.`;
+      badge.textContent = t("version_commit_badge", {
+        short: state.systemVersion.local_short,
+      });
+      details.textContent = t("version_details_git", {
+        short: state.systemVersion.local_short,
+        date: state.systemVersion.local_date || "local",
+        subject: state.systemVersion.local_subject || "",
+      });
     } else {
-      badge.textContent = "Lokale Version";
-      details.textContent =
-        "Prüfe bei Bedarf, ob auf GitHub eine neuere Version verfügbar ist. Deine Lieder, Highlights und Einstellungen bleiben beim Update vollständig erhalten.";
+      badge.textContent = t("version_local_badge");
+      details.textContent = t("version_details_fallback");
     }
   }
+
+  // Sofortiger Sprachwechsel (DE / EN / FR)
+  document.querySelectorAll("[data-lang-select]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const nextLang = setLangCode(btn.dataset.langSelect);
+      state.settings.language = nextLang;
+
+      applyStaticTranslations();
+      syncControlsWithSettings();
+      renderCategories();
+      renderSoundboard();
+      updatePlayerUI();
+      renderSecuritySection();
+      renderSettingsCategories();
+      renderUpdateVersionInfo();
+      setUpdateStatus("");
+
+      await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language: nextLang }),
+      });
+    });
+  });
 
   const checkUpdateBtn = document.getElementById("checkUpdateBtn");
   const installUpdateBtn = document.getElementById("installUpdateBtn");
@@ -2566,9 +2679,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (checkUpdateBtn) {
     checkUpdateBtn.addEventListener("click", async () => {
       checkUpdateBtn.disabled = true;
-      checkUpdateBtn.textContent = "⏳ Prüfe auf GitHub...";
+      checkUpdateBtn.textContent = t("checking_update_btn");
       installUpdateBtn.classList.add("hidden");
-      setUpdateStatus("Verbinde mit GitHub und prüfe auf neue Version...");
+      setUpdateStatus(t("update_checking_msg"));
 
       try {
         const res = await fetch("/api/system/update-check", { cache: "no-store" });
@@ -2580,80 +2693,70 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (!res.ok || !info.ok) {
-          setUpdateStatus(
-            `⚠️ ${info.error || "Update-Prüfung fehlgeschlagen."}`,
-            { isError: true }
-          );
+          setUpdateStatus(`⚠️ ${info.error || t("update_check_failed")}`, {
+            isError: true,
+          });
           return;
         }
 
         if (info.update_available) {
           const count = info.commits_behind || 1;
           setUpdateStatus(
-            `🚀 Neue Version auf GitHub verfügbar! (${count} ${
-              count === 1 ? "Änderung" : "Änderungen"
-            } – neuester Stand: ${info.remote_short})`,
+            count === 1
+              ? t("update_available_one", { short: info.remote_short })
+              : t("update_available_many", { count, short: info.remote_short }),
             { hasUpdate: true, changelog: info.changelog || [] }
           );
           installUpdateBtn.classList.remove("hidden");
         } else {
-          setUpdateStatus(
-            `✅ Du nutzt bereits die aktuellste Version (${info.local_short}).`
-          );
+          setUpdateStatus(t("update_up_to_date_msg", { short: info.local_short }));
         }
       } catch (err) {
-        setUpdateStatus(
-          `⚠️ Fehler bei der Verbindung zum Server: ${err.message}`,
-          { isError: true }
-        );
+        setUpdateStatus(t("update_conn_err", { err: err.message }), {
+          isError: true,
+        });
       } finally {
         checkUpdateBtn.disabled = false;
-        checkUpdateBtn.textContent = "🔍 Auf neue Version prüfen";
+        checkUpdateBtn.textContent = t("check_update_btn");
       }
     });
   }
 
   if (installUpdateBtn) {
     installUpdateBtn.addEventListener("click", async () => {
-      if (
-        state.isPlaying &&
-        !confirm(
-          "Hinweis: Es läuft gerade Musik. Falls beim Update Server-Dateien erneuert werden, startet der Server für ca. 1–2 Sekunden neu. Jetzt direkt updaten?"
-        )
-      ) {
+      if (state.isPlaying && !confirm(t("confirm_update_playing"))) {
         return;
       }
 
       installUpdateBtn.disabled = true;
       checkUpdateBtn.disabled = true;
-      installUpdateBtn.textContent = "⏳ Update läuft...";
-      setUpdateStatus("⏳ Lade neue Version von GitHub herunter und installiere Update...");
+      installUpdateBtn.textContent = t("installing_update_btn");
+      setUpdateStatus(t("update_downloading_msg"));
 
       try {
         const res = await fetch("/api/system/update", { method: "POST" });
         const result = await res.json();
 
         if (!res.ok || !result.ok) {
-          setUpdateStatus(
-            `⚠️ ${result.error || "Update konnte nicht installiert werden."}`,
-            { isError: true }
-          );
+          setUpdateStatus(`⚠️ ${result.error || t("update_install_failed")}`, {
+            isError: true,
+          });
           installUpdateBtn.disabled = false;
           checkUpdateBtn.disabled = false;
-          installUpdateBtn.textContent = "⬇️ Jetzt direkt updaten";
+          installUpdateBtn.textContent = t("install_update_btn");
           return;
         }
 
         installUpdateBtn.classList.add("hidden");
         if (result.restarting) {
           setUpdateStatus(
-            `✅ Auf Version ${result.local_short || "neu"} aktualisiert! Server startet kurz neu – Oberfläche lädt automatisch neu...`,
+            t("update_restarting_msg", { short: result.local_short || "OK" }),
             { hasUpdate: true }
           );
           await waitForServerAndReload();
         } else {
           setUpdateStatus(
-            `✅ Update installiert (${result.local_short || "aktuell"})! Oberfläche wird neu geladen...`,
+            t("update_done_reload_msg", { short: result.local_short || "OK" }),
             { hasUpdate: true }
           );
           setTimeout(() => {
@@ -2662,11 +2765,7 @@ document.addEventListener("DOMContentLoaded", () => {
           }, 700);
         }
       } catch (_) {
-        // Falls der Server extrem schnell neu gestartet ist, bevor der Browser fertig gelesen hat:
-        setUpdateStatus(
-          "🔄 Server startet neu – Oberfläche wird gleich automatisch neu geladen...",
-          { hasUpdate: true }
-        );
+        setUpdateStatus(t("update_fast_restart_msg"), { hasUpdate: true });
         await waitForServerAndReload();
       }
     });
@@ -2679,6 +2778,9 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("setDuckingVol").value = Math.round(state.settings.ducking_volume * 100);
     document.getElementById("setDuckingFade").value = state.settings.ducking_fade;
     document.getElementById("newPasswordInput").value = "";
+    document.querySelectorAll("[data-lang-select]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.langSelect === getLang());
+    });
     showSecFeedback("");
     renderSecuritySection();
     renderSettingsCategories();
@@ -2690,30 +2792,30 @@ document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("magicLanUrlInput");
     try {
       await navigator.clipboard.writeText(input.value);
-      showSecFeedback("✅ Geheimer Direktlink in die Zwischenablage kopiert!");
+      showSecFeedback(t("fb_copied"));
     } catch (_) {
       input.select();
       document.execCommand("copy");
-      showSecFeedback("✅ Geheimer Direktlink markiert / kopiert!");
+      showSecFeedback(t("fb_copied"));
     }
   });
 
   document.getElementById("rotateTokenBtn").addEventListener("click", async () => {
-    if (!confirm("Neuen geheimen Link erzeugen? Der bisherige Link wird sofort ungültig und fremde Geräte werden abgemeldet.")) {
+    if (!confirm(t("confirm_rotate_token"))) {
       return;
     }
     const res = await fetch("/api/auth/rotate-token", { method: "POST" });
     if (res.ok) {
       await loadStateFromServer();
       renderSecuritySection();
-      showSecFeedback("🔄 Neuer geheimer Token-Link wurde erzeugt! Alte Links sind gesperrt.");
+      showSecFeedback(t("fb_rotated"));
     }
   });
 
   document.getElementById("savePasswordBtn").addEventListener("click", async () => {
     const pw = document.getElementById("newPasswordInput").value.trim();
     if (pw.length < 4) {
-      showSecFeedback("⚠️ Bitte mindestens 4 Zeichen als Passwort / PIN eingeben.", true);
+      showSecFeedback(t("fb_pw_short"), true);
       return;
     }
     const res = await fetch("/api/auth/password", {
@@ -2726,9 +2828,9 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("newPasswordInput").value = "";
       await loadStateFromServer();
       renderSecuritySection();
-      showSecFeedback("✅ Neues Passwort / PIN wurde gespeichert!");
+      showSecFeedback(t("fb_pw_saved"));
     } else {
-      showSecFeedback(data.error || "Fehler beim Speichern.", true);
+      showSecFeedback(data.error || t("fb_pw_err"), true);
     }
   });
 

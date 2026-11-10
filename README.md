@@ -28,7 +28,9 @@ Designed for effortless touch control on **iPads, smartphones, and laptops**, it
 * **🔒 Protected Wi-Fi Remote Access (Offline QR Code + Token & PIN)**
   * Built-in zero-dependency ISO/IEC 18004 SVG QR code generator—scan once with an iPad or phone camera in the venue Wi-Fi (even with zero internet access) for instant 30-day authenticated `HttpOnly` session access, or log in via custom password/PIN with brute-force rate limiting.
 * **🔄 Built-in GitHub Update Checker & One-Click Updater**
-  * Check directly inside **`⚙️ Einstellungen`** whether a newer version is available on GitHub and install updates with a single click—automatically restarting the server if needed while keeping all uploaded audio files, cue points, and database settings untouched.
+  * Check directly inside **`⚙️ Settings`** whether a newer version is available on GitHub and install updates with a single click—automatically restarting the server if needed while keeping all uploaded audio files, cue points, and database settings untouched.
+* **🌐 Multilingual Interface (`Deutsch`, `English`, `Français`)**
+  * Switch the entire interface (cockpit controls, tooltips, default categories, modals, and Wi-Fi lock screen) live between German, English, and French inside Settings.
 * **💾 Persistent SQLite Storage**
   * All uploaded audio files, categories, track order, cue points, waveform peaks, and mixer settings are stored persistently on the server for future competitions.
 

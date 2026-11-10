@@ -554,6 +554,7 @@ def init_db():
         "view_mode": "grid",
         "output_mode": "server",
         "panel_order": "songs,fader,deck",
+        "language": "de",
     }
     for k, v in default_settings.items():
         conn.execute(
@@ -802,7 +803,13 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         # Nicht eingeloggt -> Login-Sperrbildschirm anzeigen
         if not authed:
             login_file = STATIC_DIR / "login.html"
-            data = login_file.read_bytes()
+            lang = settings.get("language", "de")
+            if lang not in ("de", "en", "fr"):
+                lang = "de"
+            html_str = login_file.read_text(encoding="utf-8").replace(
+                'data-server-lang="de"', f'data-server-lang="{lang}"'
+            )
+            data = html_str.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))

@@ -1418,6 +1418,58 @@ body {
   100% { transform: translateX(200%); }
 }
 
+/* LANGUAGE SWITCHER IN SETTINGS */
+.lang-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lang-header {
+  font-weight: 800;
+  font-size: 0.96rem;
+}
+
+.lang-sub {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.lang-switcher {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.lang-btn {
+  background: var(--bg-input);
+  border: 1.5px solid var(--border-color);
+  color: var(--text-muted);
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.lang-btn:hover {
+  border-color: var(--accent-blue);
+  color: var(--text-main);
+}
+
+.lang-btn.active {
+  background: var(--accent-orange);
+  border-color: var(--accent-orange);
+  color: #ffffff;
+  box-shadow: 0 3px 12px rgba(249, 115, 22, 0.35);
+}
+
 /* LAN INFO CARD */
 .lan-info-card {
   display: flex;
