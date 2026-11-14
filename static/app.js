@@ -269,26 +269,70 @@ function setOutputMode(mode) {
   const nextMode = mode === "local" ? "local" : "server";
   if (nextMode === state.outputMode) return;
 
-  // Wenn wir auf Server-Ton wechseln, lokalen Browser-Ton leise beenden
-  if (nextMode === "server") {
-    cancelAllDeckFades();
-    decks.forEach((d) => {
-      d.audio.pause();
-      d.fadeGain = 0;
-    });
-    clearLocalPlaybackSnapshot();
-    document.getElementById("localResumeBanner").classList.add("hidden");
+  if (nextMode === "local") {
+    // Übergabe von Server-Ton -> Gerät-Ton (z.B. iPad):
+    // Aktuelles Lied + Sekunde merken, Server-Ton stoppen und lokal nahtlos an derselben Stelle weiterspielen!
+    const wasServerPlaying = state.isPlaying && Boolean(state.currentTrack);
+    const handoffTrack = state.currentTrack;
+    const handoffCue = state.currentCue;
+    const handoffTime = Number(state.serverCurrentTime || 0);
+
+    state.outputMode = "local";
+    localStorage.setItem("arena_dj_output_mode", "local");
+    syncControlsWithSettings();
+
+    if (wasServerPlaying && handoffTrack) {
+      ensureAudioContext();
+      // Server-Audio sofort stoppen, damit nicht beide gleichzeitig laufen
+      fetch("/api/player/command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stop" }),
+      }).catch(() => {});
+
+      triggerTrackCue(handoffTrack, handoffCue, { resumeAt: handoffTime });
+    } else {
+      state.isPlaying = !getActiveAudio().paused;
+      updatePlayerUI();
+      renderSoundboard();
+    }
+    return;
   }
 
-  state.outputMode = nextMode;
-  localStorage.setItem("arena_dj_output_mode", nextMode);
+  // Übergabe von Gerät-Ton -> Server-Ton:
+  // Falls lokal gerade ein Lied läuft, lokal stoppen und auf dem Server nahtlos an derselben Position fortsetzen!
+  const activeAudio = getActiveAudio();
+  const wasLocalPlaying = !activeAudio.paused && Boolean(state.currentTrack);
+  const handoffTrack = state.currentTrack;
+  const handoffCue = state.currentCue;
+  const handoffTime = Number(activeAudio.currentTime || 0);
+
+  cancelAllDeckFades();
+  decks.forEach((d) => {
+    d.audio.pause();
+    d.fadeGain = 0;
+  });
+  clearLocalPlaybackSnapshot();
+  document.getElementById("localResumeBanner").classList.add("hidden");
+
+  state.outputMode = "server";
+  localStorage.setItem("arena_dj_output_mode", "server");
   syncControlsWithSettings();
-  if (nextMode === "server") {
-    pollServerPlayerStatus();
+
+  if (wasLocalPlaying && handoffTrack) {
+    let cueIdx = -1;
+    if (handoffCue && handoffCue.id && Array.isArray(handoffTrack.cues)) {
+      cueIdx = handoffTrack.cues.findIndex((c) => c.id === handoffCue.id);
+    }
+    sendServerCommand({
+      action: "trigger_cue",
+      track_id: handoffTrack.id,
+      cue_index: cueIdx,
+      active_category: state.activeCategory,
+      resume_time: handoffTime,
+    });
   } else {
-    state.isPlaying = !getActiveAudio().paused;
-    updatePlayerUI();
-    renderSoundboard();
+    pollServerPlayerStatus();
   }
 }
 

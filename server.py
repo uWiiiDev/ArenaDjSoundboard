@@ -2183,12 +2183,20 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             track_id = int(data.get("track_id", 0))
             cue_index = int(data.get("cue_index", 0))
             active_category = str(data.get("active_category") or "all")
+            resume_raw = data.get("resume_time")
+            resume_time = float(resume_raw) if resume_raw is not None else None
             track = next((t for t in tracks if t["id"] == track_id), None)
             if not track:
                 return self.send_json({"error": "Lied nicht gefunden"}, 404)
             cues = track.get("cues") or []
             cue = cues[cue_index] if 0 <= cue_index < len(cues) else None
-            PLAYER_ENGINE.trigger_cue(track, cue, settings, active_category=active_category)
+            PLAYER_ENGINE.trigger_cue(
+                track,
+                cue,
+                settings,
+                active_category=active_category,
+                resume_time=resume_time,
+            )
         elif action == "toggle_play_pause":
             PLAYER_ENGINE.toggle_play_pause(settings)
         elif action == "fade_out":

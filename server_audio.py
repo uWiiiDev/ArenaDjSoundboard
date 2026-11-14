@@ -310,6 +310,7 @@ class ServerAudioEngine:
         active_category: str = "all",
         is_crossfade: bool = False,
         crossfade_sec: float | None = None,
+        resume_time: float | None = None,
     ):
         with self.lock:
             self.sync_settings(settings)
@@ -324,8 +325,16 @@ class ServerAudioEngine:
             fade_in_cfg = float(settings.get("fade_in_duration", 1.5))
             xfade_cfg = float(settings.get("crossfade_duration", 4.0))
 
-            start_time = float(cue.get("start_time", 0.0)) if cue else 0.0
-            cue_wants_fade = bool(cue.get("fade_in", True)) if cue else True
+            start_time = (
+                max(0.0, float(resume_time))
+                if resume_time is not None
+                else (float(cue.get("start_time", 0.0)) if cue else 0.0)
+            )
+            cue_wants_fade = (
+                False
+                if resume_time is not None
+                else (bool(cue.get("fade_in", True)) if cue else True)
+            )
 
             prev_deck = self.decks[self.active_idx]
             prev_playing = (not prev_deck.paused) and prev_deck.fade_gain > 0.02
