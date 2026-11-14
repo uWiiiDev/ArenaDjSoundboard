@@ -1610,11 +1610,11 @@ function closeCueEditor() {
 }
 
 function updateEditorTimeDisplay(duration) {
-  const t = state.editorCursorTime;
-  document.getElementById("editorCursorTime").textContent = formatTime(t, true);
+  const cursorSec = state.editorCursorTime;
+  document.getElementById("editorCursorTime").textContent = formatTime(cursorSec, true);
   const markBtnTime = document.getElementById("markBtnTime");
   if (markBtnTime) {
-    markBtnTime.textContent = formatTime(t, true);
+    markBtnTime.textContent = formatTime(cursorSec, true);
   }
   if (duration !== undefined) {
     document.getElementById("editorTotalTime").textContent = formatTime(duration, true);
