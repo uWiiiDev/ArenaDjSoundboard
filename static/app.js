@@ -57,6 +57,8 @@ const state = {
   shuffleHistory: [],
   plannedNextTrackId: null,
   serverNextTrackId: null,
+  bulkSelectMode: false,
+  selectedTrackIds: new Set(),
 
   // Live Player State
   currentTrack: null,
@@ -1188,15 +1190,76 @@ function getFilteredTracks() {
 const LOOP_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>`;
 const EDIT_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>`;
 
+function updateBulkBarUI() {
+  const bar = document.getElementById("bulkActionBar");
+  const toggleBtn = document.getElementById("bulkSelectToggleBtn");
+  const selectAllBtn = document.getElementById("bulkSelectAllBtn");
+  const countLabel = document.getElementById("bulkCountLabel");
+  const delSelectedBtn = document.getElementById("bulkDeleteSelectedBtn");
+  const delAllVisibleBtn = document.getElementById("bulkDeleteAllVisibleBtn");
+
+  if (toggleBtn) {
+    toggleBtn.classList.toggle("active", Boolean(state.bulkSelectMode));
+  }
+  if (!bar) return;
+
+  if (!state.bulkSelectMode) {
+    bar.classList.add("hidden");
+    return;
+  }
+
+  bar.classList.remove("hidden");
+  const visibleTracks = getFilteredTracks();
+  const visibleIds = visibleTracks.map((tr) => tr.id);
+  // Entferne IDs aus der Auswahl, die gar nicht mehr existieren
+  const existingSet = new Set(state.tracks.map((tr) => tr.id));
+  for (const id of Array.from(state.selectedTrackIds)) {
+    if (!existingSet.has(id)) state.selectedTrackIds.delete(id);
+  }
+
+  const selCount = state.selectedTrackIds.size;
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => state.selectedTrackIds.has(id));
+
+  if (selectAllBtn) {
+    selectAllBtn.textContent = allVisibleSelected
+      ? t("bulk_deselect_all_btn")
+      : t("bulk_select_all_btn");
+    selectAllBtn.disabled = visibleIds.length === 0;
+  }
+  if (countLabel) {
+    countLabel.textContent = t("bulk_selected_count", { count: selCount });
+  }
+  if (delSelectedBtn) {
+    delSelectedBtn.disabled = selCount === 0;
+    delSelectedBtn.textContent = t("bulk_delete_selected_btn", { count: selCount });
+  }
+  if (delAllVisibleBtn) {
+    delAllVisibleBtn.disabled = visibleIds.length === 0;
+    delAllVisibleBtn.textContent = t("bulk_delete_all_btn", { count: visibleIds.length });
+  }
+}
+
+function toggleTrackSelection(trackId) {
+  if (state.selectedTrackIds.has(trackId)) {
+    state.selectedTrackIds.delete(trackId);
+  } else {
+    state.selectedTrackIds.add(trackId);
+  }
+  renderSoundboard();
+}
+
 function renderSoundboard() {
   if (state.isDraggingTrack) return;
   const grid = document.getElementById("soundboardGrid");
   const tracks = getFilteredTracks();
   const isListMode = state.settings.view_mode === "list";
   const isStudio = getTheme() === "studio";
-  const canDragTracks = !state.searchQuery.trim();
+  const isBulk = Boolean(state.bulkSelectMode);
+  const canDragTracks = !state.searchQuery.trim() && !isBulk;
 
   grid.classList.toggle("list-mode", isListMode);
+  updateBulkBarUI();
 
   if (tracks.length === 0) {
     grid.innerHTML = `
@@ -1215,6 +1278,7 @@ function renderSoundboard() {
       .map((track) => {
         const isTrackPlaying =
           state.isPlaying && state.currentTrack && state.currentTrack.id === track.id;
+        const isSelected = isBulk && state.selectedTrackIds.has(track.id);
         const cues = track.cues || [];
 
         const numsHtml = cues
@@ -1249,10 +1313,12 @@ function renderSoundboard() {
         const loopTip = track.loop ? t("loop_active_title") : t("loop_inactive_title");
         const playSymbol = isTrackPlaying ? (isStudio ? "■" : "🔊") : "▶";
         return `
-          <div class="track-list-row ${isTrackPlaying ? "is-playing" : ""}" data-track-id="${track.id}">
+          <div class="track-list-row ${isTrackPlaying ? "is-playing" : ""} ${isBulk ? "bulk-selectable" : ""} ${isSelected ? "bulk-selected" : ""}" data-track-id="${track.id}">
             <div class="list-track-main">
               ${
-                canDragTracks
+                isBulk
+                  ? `<input type="checkbox" class="track-select-checkbox" data-bulk-check="${track.id}" ${isSelected ? "checked" : ""} />`
+                  : canDragTracks
                   ? `<span class="track-drag-handle" title="${escapeHtml(t("track_drag_title"))}">⠿</span>`
                   : ""
               }
@@ -1299,6 +1365,7 @@ function renderSoundboard() {
       .map((track) => {
         const isTrackPlaying =
           state.isPlaying && state.currentTrack && state.currentTrack.id === track.id;
+        const isSelected = isBulk && state.selectedTrackIds.has(track.id);
         const cues = track.cues || [];
 
         const numsHtml = cues
@@ -1334,10 +1401,12 @@ function renderSoundboard() {
         const loopTip = track.loop ? t("loop_active_title") : t("loop_inactive_title");
         const playSymbol = isTrackPlaying ? (isStudio ? "■" : "🔊") : "▶";
         return `
-          <article class="track-card ${isTrackPlaying ? "is-playing" : ""}" data-track-id="${track.id}">
+          <article class="track-card ${isTrackPlaying ? "is-playing" : ""} ${isBulk ? "bulk-selectable" : ""} ${isSelected ? "bulk-selected" : ""}" data-track-id="${track.id}">
             <div class="track-card-header">
               ${
-                canDragTracks
+                isBulk
+                  ? `<input type="checkbox" class="track-select-checkbox" data-bulk-check="${track.id}" ${isSelected ? "checked" : ""} />`
+                  : canDragTracks
                   ? `<span class="track-drag-handle" title="${escapeHtml(t("track_drag_title"))}">⠿</span>`
                   : ""
               }
@@ -1385,37 +1454,47 @@ function renderSoundboard() {
       .join("");
   }
 
-  // Event-Listener für nummerierte Highlight-Buttons (1, 2, 3...) & Start-Buttons (▶)
-  grid.querySelectorAll(".cue-num-btn, .cue-trigger-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const trackId = Number(btn.dataset.trackId);
-      const cueIdx = Number(btn.dataset.cueIndex);
-      const track = state.tracks.find((t) => t.id === trackId);
-      if (!track) return;
-      const cue =
-        cueIdx >= 0 && track.cues && track.cues[cueIdx] ? track.cues[cueIdx] : null;
-      triggerTrackCue(track, cue);
+  if (isBulk) {
+    grid.querySelectorAll(".track-card, .track-list-row").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleTrackSelection(Number(el.dataset.trackId));
+      });
     });
-  });
-
-  // Event-Listener für direkten Endlosschleifen-Schalter (🔁)
-  grid.querySelectorAll("[data-toggle-loop]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      toggleTrackLoop(Number(btn.dataset.toggleLoop));
+  } else {
+    // Event-Listener für nummerierte Highlight-Buttons (1, 2, 3...) & Start-Buttons (▶)
+    grid.querySelectorAll(".cue-num-btn, .cue-trigger-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const trackId = Number(btn.dataset.trackId);
+        const cueIdx = Number(btn.dataset.cueIndex);
+        const track = state.tracks.find((t) => t.id === trackId);
+        if (!track) return;
+        const cue =
+          cueIdx >= 0 && track.cues && track.cues[cueIdx] ? track.cues[cueIdx] : null;
+        triggerTrackCue(track, cue);
+      });
     });
-  });
 
-  // Event-Listener für "Highlights bearbeiten"
-  grid.querySelectorAll("[data-edit-track]").forEach((el) => {
-    el.addEventListener("click", () => {
-      openCueEditor(Number(el.dataset.editTrack));
+    // Event-Listener für direkten Endlosschleifen-Schalter (🔁)
+    grid.querySelectorAll("[data-toggle-loop]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleTrackLoop(Number(btn.dataset.toggleLoop));
+      });
     });
-  });
 
-  // Drag & Drop zum Umsortieren der Lieder untereinander
-  if (canDragTracks) {
-    bindTrackDragAndDrop(grid);
+    // Event-Listener für "Highlights bearbeiten"
+    grid.querySelectorAll("[data-edit-track]").forEach((el) => {
+      el.addEventListener("click", () => {
+        openCueEditor(Number(el.dataset.editTrack));
+      });
+    });
+
+    // Drag & Drop zum Umsortieren der Lieder untereinander
+    if (canDragTracks) {
+      bindTrackDragAndDrop(grid);
+    }
   }
 
   // Mini-Waveforms zeichnen (in der Kachel-Ansicht)
@@ -2436,6 +2515,77 @@ document.addEventListener("DOMContentLoaded", () => {
     await fetch(`/api/tracks/${state.editingTrackId}`, { method: "DELETE" });
     closeCueEditor();
     await loadStateFromServer();
+  });
+
+  // ==========================================================================
+  // MEHRFACHAUSWAHL / MASSEN-LÖSCHUNG (BULK SELECT & DELETE)
+  // ==========================================================================
+  async function executeBulkDelete(trackIds, isAllInView = false) {
+    if (!trackIds || trackIds.length === 0) return;
+    const msgKey = isAllInView ? "bulk_confirm_delete_all" : "bulk_confirm_delete";
+    if (!confirm(t(msgKey, { count: trackIds.length }))) {
+      return;
+    }
+    try {
+      const res = await fetch("/api/tracks/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track_ids: trackIds }),
+      });
+      if (res.ok) {
+        for (const id of trackIds) {
+          state.selectedTrackIds.delete(id);
+        }
+        if (state.currentTrack && trackIds.includes(state.currentTrack.id)) {
+          stopImmediate();
+          state.currentTrack = null;
+          state.currentCue = null;
+        }
+        await loadStateFromServer();
+        if (state.tracks.length === 0) {
+          state.bulkSelectMode = false;
+        }
+        renderSoundboard();
+      }
+    } catch (err) {
+      alert(t("err_upload_alert", { err: err.message }));
+    }
+  }
+
+  document.getElementById("bulkSelectToggleBtn")?.addEventListener("click", () => {
+    state.bulkSelectMode = !state.bulkSelectMode;
+    if (!state.bulkSelectMode) {
+      state.selectedTrackIds.clear();
+    }
+    renderSoundboard();
+  });
+
+  document.getElementById("bulkExitBtn")?.addEventListener("click", () => {
+    state.bulkSelectMode = false;
+    state.selectedTrackIds.clear();
+    renderSoundboard();
+  });
+
+  document.getElementById("bulkSelectAllBtn")?.addEventListener("click", () => {
+    const visibleIds = getFilteredTracks().map((tr) => tr.id);
+    const allSelected =
+      visibleIds.length > 0 && visibleIds.every((id) => state.selectedTrackIds.has(id));
+    if (allSelected) {
+      visibleIds.forEach((id) => state.selectedTrackIds.delete(id));
+    } else {
+      visibleIds.forEach((id) => state.selectedTrackIds.add(id));
+    }
+    renderSoundboard();
+  });
+
+  document.getElementById("bulkDeleteSelectedBtn")?.addEventListener("click", () => {
+    const ids = Array.from(state.selectedTrackIds);
+    executeBulkDelete(ids, false);
+  });
+
+  document.getElementById("bulkDeleteAllVisibleBtn")?.addEventListener("click", () => {
+    const visibleIds = getFilteredTracks().map((tr) => tr.id);
+    executeBulkDelete(visibleIds, true);
   });
 
   // ==========================================================================

@@ -205,6 +205,45 @@
               <line x1="20" y1="12" x2="23" y2="12"></line>
             </svg>
           </button>
+
+          <button
+            type="button"
+            class="btn-bulk-pill"
+            id="bulkSelectToggleBtn"
+            data-i18n-title="bulk_mode_btn_title"
+            data-i18n-aria="bulk_mode_btn_title"
+            title="Mehrfachauswahl / Mehrere Lieder gleichzeitig löschen"
+            aria-label="Mehrfachauswahl / Mehrere Lieder gleichzeitig löschen"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+              <path d="M10 11v6"></path>
+              <path d="M14 11v6"></path>
+              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- MEHRFACHAUSWAHL / MASSEN-LÖSCHLEISTE -->
+      <div class="bulk-action-bar hidden" id="bulkActionBar">
+        <div class="bulk-bar-left">
+          <button type="button" class="btn btn-secondary btn-bulk-sm" id="bulkSelectAllBtn" data-i18n="bulk_select_all_btn">
+            ☑ Alle auswählen
+          </button>
+          <span class="bulk-count-badge" id="bulkCountLabel">0 ausgewählt</span>
+        </div>
+        <div class="bulk-bar-right">
+          <button type="button" class="btn btn-danger btn-bulk-sm" id="bulkDeleteSelectedBtn" disabled data-i18n="bulk_delete_selected_btn">
+            🗑️ Ausgewählte löschen
+          </button>
+          <button type="button" class="btn btn-danger btn-bulk-sm btn-bulk-all" id="bulkDeleteAllVisibleBtn" data-i18n="bulk_delete_all_btn">
+            🗑️ Alle sichtbaren löschen
+          </button>
+          <button type="button" class="btn btn-secondary btn-bulk-sm" id="bulkExitBtn" data-i18n="bulk_done_btn">
+            ✕ Fertig
+          </button>
         </div>
       </div>
 

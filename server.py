@@ -1700,6 +1700,9 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/tracks":
             return self.handle_upload_tracks()
 
+        if path == "/api/tracks/bulk-delete":
+            return self.handle_bulk_delete_tracks()
+
         m_cue = re.match(r"^/api/tracks/(\d+)/cues$", path)
         if m_cue:
             return self.handle_create_cue(int(m_cue.group(1)))
@@ -1924,7 +1927,57 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                 filepath.unlink()
             except Exception:
                 pass
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
         self.send_json({"ok": True})
+
+    def handle_bulk_delete_tracks(self):
+        data = self.read_json_body()
+        raw_ids = data.get("track_ids") or []
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return self.send_json({"error": "Keine Lieder zum Löschen ausgewählt."}, 400)
+
+        clean_ids: list[int] = []
+        for x in raw_ids:
+            try:
+                clean_ids.append(int(x))
+            except (TypeError, ValueError):
+                pass
+        if not clean_ids:
+            return self.send_json({"error": "Ungültige Lied-IDs."}, 400)
+
+        placeholders = ",".join("?" for _ in clean_ids)
+        conn = get_db()
+        rows = conn.execute(
+            f"SELECT id, filename FROM tracks WHERE id IN ({placeholders})",
+            tuple(clean_ids),
+        ).fetchall()
+
+        conn.execute(
+            f"DELETE FROM tracks WHERE id IN ({placeholders})",
+            tuple(clean_ids),
+        )
+        conn.commit()
+        conn.close()
+
+        deleted_ids_set = {r["id"] for r in rows}
+        for r in rows:
+            filepath = UPLOADS_DIR / os.path.basename(r["filename"])
+            if filepath.is_file():
+                try:
+                    filepath.unlink()
+                except Exception:
+                    pass
+
+        if PLAYER_ENGINE:
+            status = PLAYER_ENGINE.get_status()
+            if status.get("track_id") in deleted_ids_set:
+                PLAYER_ENGINE.stop_immediate()
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+
+        self.send_json({"ok": True, "deleted_count": len(rows)})
 
     def handle_create_cue(self, track_id: int):
         data = self.read_json_body()
