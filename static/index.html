@@ -127,7 +127,12 @@
               title="Kachel-Ansicht"
               aria-label="Kachel-Ansicht"
             >
-              ▦
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+              </svg>
             </button>
             <button
               type="button"
@@ -138,7 +143,14 @@
               title="Listen-Ansicht"
               aria-label="Listen-Ansicht"
             >
-              ☰
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="8" y1="6" x2="21" y2="6"></line>
+                <line x1="8" y1="12" x2="21" y2="12"></line>
+                <line x1="8" y1="18" x2="21" y2="18"></line>
+                <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                <line x1="3" y1="18" x2="3.01" y2="18"></line>
+              </svg>
             </button>
           </div>
 
@@ -491,6 +503,20 @@
       </div>
 
       <div class="modal-body">
+        <!-- ERSCHEINUNGSBILD / DESIGN-MODUS (STUDIO PRO vs. ARENA KLASSIK) -->
+        <div class="lang-box theme-box">
+          <div class="lang-header">
+            <span data-i18n="theme_heading">🎛️ Erscheinungsbild / Design</span>
+          </div>
+          <div class="lang-sub" data-i18n="theme_sub">
+            Wähle zwischen einem dezenten, professionellen Studio-Mischpult-Look und dem farbigen Wettkampf-Design:
+          </div>
+          <div class="lang-switcher theme-switcher" role="group" aria-label="Theme">
+            <button type="button" class="lang-btn active" data-theme-select="studio" data-i18n="theme_studio_btn">🎛️ Studio Pro (Dezent)</button>
+            <button type="button" class="lang-btn" data-theme-select="arena" data-i18n="theme_arena_btn">🏟️ Arena Klassik (Farbig)</button>
+          </div>
+        </div>
+
         <!-- SPRACHAUSWAHL (DEUTSCH / ENGLISH / FRANÇAIS) -->
         <div class="lang-box">
           <div class="lang-header">

@@ -19,6 +19,26 @@
   --header-ctrl-h: 38px;
 }
 
+body[data-theme="studio"] {
+  --bg-main: #090a0d;
+  --bg-panel: #111318;
+  --bg-card: #161920;
+  --bg-card-hover: #1c2029;
+  --bg-input: #0c0e13;
+  --border-color: #242934;
+  --text-main: #e2e8f0;
+  --text-muted: #788396;
+  --accent-orange: #0284c7;
+  --accent-blue: #38bdf8;
+  --accent-green: #10b981;
+  --accent-red: #dc2626;
+  --accent-yellow: #d97706;
+  --accent-purple: #6366f1;
+  --radius-lg: 6px;
+  --radius-md: 5px;
+  --radius-sm: 4px;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -234,6 +254,8 @@ body {
   flex-wrap: wrap;
   justify-content: flex-end;
   min-width: 0;
+  cursor: default;
+  touch-action: manipulation;
 }
 
 .panel-cat-select {
@@ -561,35 +583,36 @@ body {
   opacity: 0.96;
 }
 
-/* SOUNDBOARD GRID */
+/* SOUNDBOARD GRID (ECHTE MEHRSPALTIGE KACHEL-ANSICHT) */
 .soundboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 212px), 1fr));
+  gap: 10px;
+  align-content: start;
 }
 
 .track-card {
   background: var(--bg-card);
-  border: 2px solid var(--border-color);
+  border: 1.5px solid var(--border-color);
   border-radius: var(--radius-lg);
-  padding: 14px;
+  padding: 11px 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 9px;
   transition: border-color 0.2s, box-shadow 0.2s;
   position: relative;
 }
 
 .track-card.is-playing {
   border-color: var(--accent-green);
-  box-shadow: 0 0 22px rgba(34, 197, 94, 0.25);
+  box-shadow: 0 0 18px rgba(34, 197, 94, 0.22);
 }
 
 .track-card-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 7px;
 }
 
 .track-title-wrap {
@@ -598,7 +621,7 @@ body {
 }
 
 .track-title {
-  font-size: 1.06rem;
+  font-size: 0.94rem;
   font-weight: 700;
   color: var(--text-main);
   white-space: nowrap;
@@ -607,7 +630,7 @@ body {
 }
 
 .track-meta-sub {
-  font-size: 0.82rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   margin-top: 2px;
   display: flex;
@@ -2334,3 +2357,206 @@ body {
 .hidden {
   display: none !important;
 }
+
+/* ==========================================================================
+   STUDIO PRO DESIGN-MODUS (DEZENTES, PROFESSIONELLES BROADCAST- & DJ-LAYOUT)
+   ========================================================================== */
+body[data-theme="studio"] .top-bar {
+  background: #0d0f14;
+  border-bottom: 1px solid #1f242f;
+}
+
+body[data-theme="studio"] .brand h1 {
+  letter-spacing: 0.08em;
+  font-size: 1.05rem;
+}
+
+body[data-theme="studio"] .brand-sub {
+  color: #64748b;
+  font-weight: 500;
+}
+
+body[data-theme="studio"] .cockpit-panel {
+  border-width: 1px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+body[data-theme="studio"] .panel-drag-handle {
+  background: #14171f;
+  border-bottom: 1px solid #222733;
+}
+
+body[data-theme="studio"] .drag-grip {
+  color: #475569;
+}
+
+body[data-theme="studio"] .panel-title-text {
+  color: #94a3b8;
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+}
+
+body[data-theme="studio"] .track-card,
+body[data-theme="studio"] .track-list-row {
+  border-width: 1px;
+  background: #151820;
+  border-color: #232834;
+}
+
+body[data-theme="studio"] .track-card:hover,
+body[data-theme="studio"] .track-list-row:hover {
+  background: #191d27;
+  border-color: #2f3747;
+}
+
+body[data-theme="studio"] .track-card.is-playing,
+body[data-theme="studio"] .track-list-row.is-playing {
+  border-color: #10b981;
+  background: #131c1c;
+  box-shadow: inset 3px 0 0 #10b981;
+}
+
+/* Matte Studio-Pads statt knallbunter Bonbon-Farben */
+body[data-theme="studio"] .list-quick-play {
+  background: #1e232e !important;
+  border: 1px solid #2f3747 !important;
+  border-bottom: 2px solid var(--track-accent, #38bdf8) !important;
+  color: #cbd5e1 !important;
+  border-radius: 5px;
+  width: 32px;
+  height: 32px;
+  font-size: 0.78rem;
+  box-shadow: none !important;
+}
+
+body[data-theme="studio"] .list-quick-play:hover {
+  background: #262d3b !important;
+  color: #ffffff !important;
+  border-color: #475569 !important;
+}
+
+body[data-theme="studio"] .is-playing .list-quick-play {
+  background: rgba(16, 185, 129, 0.18) !important;
+  border-color: #10b981 !important;
+  color: #34d399 !important;
+}
+
+body[data-theme="studio"] .cue-num-btn {
+  background: #1c202a !important;
+  border: 1px solid #2c3342 !important;
+  border-bottom: 2px solid var(--cue-accent, #38bdf8) !important;
+  color: #cbd5e1 !important;
+  border-radius: 4px;
+  width: 32px;
+  height: 30px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  box-shadow: none !important;
+}
+
+body[data-theme="studio"] .cue-num-btn:hover {
+  background: #252b38 !important;
+  color: #ffffff !important;
+  border-color: #475569 !important;
+}
+
+body[data-theme="studio"] .cue-num-btn.active-cue {
+  background: rgba(14, 165, 233, 0.22) !important;
+  border-color: #38bdf8 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.25) !important;
+}
+
+body[data-theme="studio"] .btn-edit-cues,
+body[data-theme="studio"] .btn-loop-toggle {
+  width: 28px;
+  height: 28px;
+  background: #11141b;
+  border-color: #252b37;
+  color: #64748b;
+  border-radius: 4px;
+}
+
+body[data-theme="studio"] .btn-edit-cues:hover,
+body[data-theme="studio"] .btn-loop-toggle:hover {
+  color: #e2e8f0;
+  border-color: #475569;
+  background: #1c212c;
+}
+
+body[data-theme="studio"] .card-waveform-wrap {
+  height: 36px;
+  background: #0e1016;
+  border-color: #1e232e;
+}
+
+/* Dezentere Broadcast-Buttons im Master-Regler & Deck */
+body[data-theme="studio"] .talkover-icon,
+body[data-theme="studio"] .btn-fade-out .t-icon {
+  display: none;
+}
+
+body[data-theme="studio"] .btn-talkover {
+  background: #161a22;
+  border: 1px solid #2b3240;
+  box-shadow: none;
+}
+
+body[data-theme="studio"] .btn-talkover:hover {
+  background: #1c212b;
+  border-color: #3b4559;
+}
+
+body[data-theme="studio"] .btn-talkover.active {
+  background: rgba(217, 119, 6, 0.16);
+  border-color: #f59e0b;
+  box-shadow: inset 0 0 12px rgba(245, 158, 11, 0.15);
+}
+
+body[data-theme="studio"] .btn-transport {
+  background: #161922;
+  border: 1px solid #282f3d;
+  box-shadow: none;
+}
+
+body[data-theme="studio"] .btn-play-pause:not(:disabled) {
+  background: #132220;
+  border-color: #059669;
+  color: #ecfdf5;
+}
+
+body[data-theme="studio"] .btn-fade-out:not(:disabled) {
+  background: #161d29;
+  border-color: #0284c7;
+  color: #e0f2fe;
+}
+
+body[data-theme="studio"] .btn-stop:not(:disabled) {
+  background: #221619;
+  border-color: #991b1b;
+  color: #fecaca;
+}
+
+body[data-theme="studio"] .vfader-thumb {
+  background: linear-gradient(180deg, #333b4a 0%, #1e232d 48%, #151921 100%);
+  border: 1px solid #475569;
+  border-radius: 4px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.65);
+}
+
+body[data-theme="studio"] .vfader-thumb-line {
+  background: #38bdf8;
+  box-shadow: none;
+}
+
+body[data-theme="studio"] .vfader-effective-fill {
+  background: linear-gradient(180deg, #38bdf8 0%, #0284c7 60%, #0369a1 100%);
+  box-shadow: none;
+}
+
+body[data-theme="studio"] .quick-vol-btn.active {
+  background: #1e293b;
+  border-color: #38bdf8;
+  color: #38bdf8;
+}
+

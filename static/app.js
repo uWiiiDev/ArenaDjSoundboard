@@ -19,6 +19,7 @@ const state = {
     shuffle_enabled: false,
     crossfade_enabled: true,
     view_mode: "grid",
+    design_theme: getTheme(),
     language: getLang(),
     panel_order: localStorage.getItem("arena_dj_panel_order") || "songs,fader,deck",
   },
@@ -948,12 +949,24 @@ async function loadStateFromServer() {
     state.settings.shuffle_enabled = data.settings.shuffle_enabled === "true";
     state.settings.crossfade_enabled = data.settings.crossfade_enabled !== "false";
     state.settings.view_mode = data.settings.view_mode === "list" ? "list" : "grid";
+    let themeOrLangChanged = false;
+    if (data.settings.design_theme && data.settings.design_theme !== getTheme()) {
+      setThemeCode(data.settings.design_theme);
+      state.settings.design_theme = getTheme();
+      themeOrLangChanged = true;
+    } else {
+      setThemeCode(getTheme());
+      state.settings.design_theme = getTheme();
+    }
     if (data.settings.language && data.settings.language !== getLang()) {
       setLangCode(data.settings.language);
       state.settings.language = getLang();
-      applyStaticTranslations();
+      themeOrLangChanged = true;
     } else {
       state.settings.language = getLang();
+    }
+    if (themeOrLangChanged) {
+      applyStaticTranslations();
     }
     if (data.settings.panel_order) {
       state.settings.panel_order = data.settings.panel_order;
@@ -1066,6 +1079,9 @@ function syncControlsWithSettings() {
   document.querySelectorAll("[data-lang-select]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.langSelect === getLang());
   });
+  document.querySelectorAll("[data-theme-select]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.themeSelect === getTheme());
+  });
 
   if (!isServerMode()) {
     applyEffectiveVolume();
@@ -1137,12 +1153,14 @@ function renderCategories() {
   }
 
   const totalCount = state.tracks.length;
+  const isStudio = getTheme() === "studio";
   let html = `<option value="all">${escapeHtml(t("cat_all"))} (${totalCount})</option>`;
 
   for (const cat of state.categories) {
     const count = state.tracks.filter((t) => t.category_id === cat.id).length;
     const catLabel = getCategoryDisplayName(cat);
-    html += `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.icon)} ${escapeHtml(catLabel)} (${count})</option>`;
+    const prefix = isStudio ? "" : `${escapeHtml(cat.icon)} `;
+    html += `<option value="${escapeHtml(cat.id)}">${prefix}${escapeHtml(catLabel)} (${count})</option>`;
   }
 
   if (select.dataset.renderedHtml !== html) {
@@ -1167,11 +1185,15 @@ function getFilteredTracks() {
   });
 }
 
+const LOOP_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>`;
+const EDIT_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>`;
+
 function renderSoundboard() {
   if (state.isDraggingTrack) return;
   const grid = document.getElementById("soundboardGrid");
   const tracks = getFilteredTracks();
   const isListMode = state.settings.view_mode === "list";
+  const isStudio = getTheme() === "studio";
   const canDragTracks = !state.searchQuery.trim();
 
   grid.classList.toggle("list-mode", isListMode);
@@ -1212,7 +1234,7 @@ function renderSoundboard() {
               <button
                 type="button"
                 class="cue-num-btn ${isCueActive ? "active-cue" : ""}"
-                style="background: linear-gradient(145deg, ${bg}ee, ${bg}88);"
+                style="--cue-accent: ${bg}; background: linear-gradient(145deg, ${bg}ee, ${bg}88);"
                 data-track-id="${track.id}"
                 data-cue-index="${idx}"
                 title="${escapeHtml(tip)}"
@@ -1225,6 +1247,7 @@ function renderSoundboard() {
 
         const mainColor = track.color || "#f97316";
         const loopTip = track.loop ? t("loop_active_title") : t("loop_inactive_title");
+        const playSymbol = isTrackPlaying ? (isStudio ? "■" : "🔊") : "▶";
         return `
           <div class="track-list-row ${isTrackPlaying ? "is-playing" : ""}" data-track-id="${track.id}">
             <div class="list-track-main">
@@ -1236,12 +1259,12 @@ function renderSoundboard() {
               <button
                 type="button"
                 class="list-quick-play cue-trigger-btn"
-                style="background: ${mainColor};"
+                style="--track-accent: ${mainColor}; background: ${mainColor};"
                 data-track-id="${track.id}"
                 data-cue-index="-1"
                 title="${escapeHtml(t("play_from_start_title"))}"
               >
-                ${isTrackPlaying ? "🔊" : "▶"}
+                ${playSymbol}
               </button>
               <div class="list-title-block">
                 <div class="list-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</div>
@@ -1261,10 +1284,10 @@ function renderSoundboard() {
                 title="${escapeHtml(loopTip)}"
                 aria-label="${escapeHtml(t("loop_aria"))}"
               >
-                🔁
+                ${LOOP_ICON_SVG}
               </button>
               <button type="button" class="btn-edit-cues" data-edit-track="${track.id}" title="${escapeHtml(t("edit_cues_title"))}" aria-label="${escapeHtml(t("edit_cues_title"))}">
-                ✂️
+                ${EDIT_ICON_SVG}
               </button>
             </div>
           </div>
@@ -1296,7 +1319,7 @@ function renderSoundboard() {
               <button
                 type="button"
                 class="cue-num-btn ${isCueActive ? "active-cue" : ""}"
-                style="background: linear-gradient(145deg, ${bg}ee, ${bg}88);"
+                style="--cue-accent: ${bg}; background: linear-gradient(145deg, ${bg}ee, ${bg}88);"
                 data-track-id="${track.id}"
                 data-cue-index="${idx}"
                 title="${escapeHtml(tip)}"
@@ -1309,6 +1332,7 @@ function renderSoundboard() {
 
         const mainColor = track.color || "#f97316";
         const loopTip = track.loop ? t("loop_active_title") : t("loop_inactive_title");
+        const playSymbol = isTrackPlaying ? (isStudio ? "■" : "🔊") : "▶";
         return `
           <article class="track-card ${isTrackPlaying ? "is-playing" : ""}" data-track-id="${track.id}">
             <div class="track-card-header">
@@ -1320,12 +1344,12 @@ function renderSoundboard() {
               <button
                 type="button"
                 class="list-quick-play cue-trigger-btn"
-                style="background: ${mainColor};"
+                style="--track-accent: ${mainColor}; background: ${mainColor};"
                 data-track-id="${track.id}"
                 data-cue-index="-1"
                 title="${escapeHtml(t("play_from_start_title"))}"
               >
-                ${isTrackPlaying ? "🔊" : "▶"}
+                ${playSymbol}
               </button>
               <div class="track-title-wrap">
                 <div class="track-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</div>
@@ -1342,10 +1366,10 @@ function renderSoundboard() {
                   title="${escapeHtml(loopTip)}"
                   aria-label="${escapeHtml(t("loop_aria"))}"
                 >
-                  🔁
+                  ${LOOP_ICON_SVG}
                 </button>
                 <button type="button" class="btn-edit-cues" data-edit-track="${track.id}" title="${escapeHtml(t("edit_cues_title"))}" aria-label="${escapeHtml(t("edit_cues_title"))}">
-                  ✂️
+                  ${EDIT_ICON_SVG}
                 </button>
               </div>
             </div>
@@ -1593,10 +1617,11 @@ function drawMiniWaveform(canvas, track) {
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
+  const isStudio = getTheme() === "studio";
   const peaks = track.peaks && track.peaks.length > 0 ? track.peaks : generateFallbackPeaks(80);
   const barWidth = w / peaks.length;
 
-  ctx.fillStyle = "#334155";
+  ctx.fillStyle = isStudio ? "#262d3a" : "#334155";
   peaks.forEach((p, i) => {
     const barH = Math.max(3, p * (h - 8));
     const x = i * barWidth;
@@ -1608,8 +1633,8 @@ function drawMiniWaveform(canvas, track) {
   const dur = track.duration || 1;
   (track.cues || []).forEach((cue) => {
     const x = Math.min(w - 2, Math.max(1, (cue.start_time / dur) * w));
-    ctx.fillStyle = cue.color || "#f97316";
-    ctx.fillRect(x - 1, 0, 3, h);
+    ctx.fillStyle = cue.color || (isStudio ? "#38bdf8" : "#f97316");
+    ctx.fillRect(x - 1, 0, isStudio ? 2 : 3, h);
   });
 }
 
@@ -1624,6 +1649,7 @@ function drawNowPlayingWaveform(currentTime, duration) {
   const track = state.currentTrack;
   if (!track) return;
 
+  const isStudio = getTheme() === "studio";
   const peaks = track.peaks && track.peaks.length > 0 ? track.peaks : generateFallbackPeaks(120);
   const dur = duration || track.duration || 1;
   const progressRatio = Math.min(1, Math.max(0, currentTime / dur));
@@ -1634,7 +1660,7 @@ function drawNowPlayingWaveform(currentTime, duration) {
     const barH = Math.max(4, p * (h - 12));
     const x = i * barWidth;
     const y = (h - barH) / 2;
-    ctx.fillStyle = ratio <= progressRatio ? "#f97316" : "#334155";
+    ctx.fillStyle = ratio <= progressRatio ? (isStudio ? "#0ea5e9" : "#f97316") : (isStudio ? "#262d3a" : "#334155");
     ctx.fillRect(x, y, Math.max(2, barWidth - 1.2), barH);
   });
 
@@ -1955,10 +1981,16 @@ function generateFallbackPeaks(len) {
 // INITIALISIERUNG & EVENT LISTENER
 // ============================================================================
 document.addEventListener("DOMContentLoaded", () => {
+  setThemeCode(getTheme());
   applyStaticTranslations();
   loadStateFromServer();
   requestAnimationFrame(updateLiveLoop);
   setInterval(pollServerPlayerStatus, 250);
+
+  // Sicherstellen, dass Klicks auf die Steuerelemente in der Kopfzeile niemals vom Panel-Drag abgefangen werden
+  document.querySelectorAll(".panel-header-controls").forEach((ctrlWrap) => {
+    ctrlWrap.addEventListener("pointerdown", (e) => e.stopPropagation());
+  });
 
   // Schutz vor versehentlichem Neuladen / Schließen im lokalen Geräte-Modus während laufender Musik!
   window.addEventListener("beforeunload", (e) => {
@@ -2716,6 +2748,29 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Sofortiger Design-Wechsel (Studio Pro vs. Arena Klassik)
+  document.querySelectorAll("[data-theme-select]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const nextTheme = setThemeCode(btn.dataset.themeSelect);
+      state.settings.design_theme = nextTheme;
+
+      applyStaticTranslations();
+      syncControlsWithSettings();
+      renderCategories();
+      renderSoundboard();
+      updatePlayerUI();
+      renderSecuritySection();
+      renderSettingsCategories();
+      renderUpdateVersionInfo();
+
+      await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ design_theme: nextTheme }),
+      });
+    });
+  });
+
   // Sofortiger Sprachwechsel (DE / EN / FR)
   document.querySelectorAll("[data-lang-select]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -2890,6 +2945,9 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("newPasswordInput").value = "";
     document.querySelectorAll("[data-lang-select]").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.langSelect === getLang());
+    });
+    document.querySelectorAll("[data-theme-select]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.themeSelect === getTheme());
     });
     showSecFeedback("");
     renderSecuritySection();

@@ -210,7 +210,11 @@ const TRANSLATIONS = {
 
     // Settings Modal
     settings_title: "⚙️ Einstellungen",
-    settings_subtitle: "Sprache, WLAN-Zugang (QR / PIN), Überblend-Zeiten, Kategorien und Software-Update.",
+    settings_subtitle: "Design, Sprache, WLAN-Zugang (QR / PIN), Überblend-Zeiten, Kategorien und Software-Update.",
+    theme_heading: "🎛️ Erscheinungsbild / Design",
+    theme_sub: "Wähle zwischen einem dezenten, professionellen Studio-Mischpult-Look und dem farbigen Wettkampf-Design:",
+    theme_studio_btn: "🎛️ Studio Pro (Dezent)",
+    theme_arena_btn: "🏟️ Arena Klassik (Farbig)",
     lang_heading: "🌐 Sprache",
     lang_sub: "Alle Bezeichnungen der Oberfläche sofort in der gewählten Sprache anzeigen:",
 
@@ -456,7 +460,11 @@ const TRANSLATIONS = {
 
     // Settings Modal
     settings_title: "⚙️ Settings",
-    settings_subtitle: "Language, Wi-Fi access (QR / PIN), fade timings, categories, and GitHub software updates.",
+    settings_subtitle: "Design, language, Wi-Fi access (QR / PIN), fade timings, categories, and GitHub software updates.",
+    theme_heading: "🎛️ Appearance / Theme",
+    theme_sub: "Choose between a subtle, professional studio mixer look and the colorful competition design:",
+    theme_studio_btn: "🎛️ Studio Pro (Subtle)",
+    theme_arena_btn: "🏟️ Arena Classic (Colorful)",
     lang_heading: "🌐 Language",
     lang_sub: "Switch all interface labels and messages immediately to your preferred language:",
 
@@ -702,7 +710,11 @@ const TRANSLATIONS = {
 
     // Settings Modal
     settings_title: "⚙️ Paramètres",
-    settings_subtitle: "Langue, accès Wi-Fi (QR / PIN), durées de fondu, catégories et mise à jour GitHub.",
+    settings_subtitle: "Design, langue, accès Wi-Fi (QR / PIN), durées de fondu, catégories et mise à jour GitHub.",
+    theme_heading: "🎛️ Apparence / Design",
+    theme_sub: "Choisissez entre un look studio professionnel sobre et le design coloré de compétition :",
+    theme_studio_btn: "🎛️ Studio Pro (Sobre)",
+    theme_arena_btn: "🏟️ Arena Classique (Coloré)",
     lang_heading: "🌐 Langue",
     lang_sub: "Afficher immédiatement tous les textes et libellés dans la langue choisie :",
 
@@ -772,9 +784,16 @@ const TRANSLATIONS = {
   },
 };
 
+const SUPPORTED_THEMES = ["studio", "arena"];
+
 let currentLang = localStorage.getItem("arena_dj_lang") || "de";
 if (!SUPPORTED_LANGUAGES.includes(currentLang)) {
   currentLang = "de";
+}
+
+let currentTheme = localStorage.getItem("arena_dj_theme") || "studio";
+if (!SUPPORTED_THEMES.includes(currentTheme)) {
+  currentTheme = "studio";
 }
 
 function getLang() {
@@ -789,11 +808,36 @@ function setLangCode(lang) {
   return currentLang;
 }
 
+function getTheme() {
+  return currentTheme;
+}
+
+function setThemeCode(theme) {
+  if (SUPPORTED_THEMES.includes(theme)) {
+    currentTheme = theme;
+    localStorage.setItem("arena_dj_theme", theme);
+  }
+  if (document.body) {
+    document.body.dataset.theme = currentTheme;
+  }
+  return currentTheme;
+}
+
+const STUDIO_EMOJI_STRIP_RE =
+  /^(?:[\u{1F300}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]\uFE0F?\s*)+/gu;
+
 function t(key, vars = {}) {
   const pack = TRANSLATIONS[currentLang] || TRANSLATIONS.de;
   let str = pack[key] ?? TRANSLATIONS.de[key] ?? key;
   for (const [k, v] of Object.entries(vars)) {
     str = str.replaceAll(`{${k}}`, String(v));
+  }
+  if (
+    currentTheme === "studio" &&
+    key !== "theme_studio_btn" &&
+    key !== "theme_arena_btn"
+  ) {
+    str = str.replace(STUDIO_EMOJI_STRIP_RE, "").trim();
   }
   return str;
 }

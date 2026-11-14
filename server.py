@@ -754,6 +754,7 @@ def init_db():
         "output_mode": "server",
         "panel_order": "songs,fader,deck",
         "language": "de",
+        "design_theme": "studio",
     }
     for k, v in default_settings.items():
         conn.execute(
