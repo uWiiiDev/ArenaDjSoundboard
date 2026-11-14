@@ -34,11 +34,11 @@ const DEFAULT_CATEGORY_TRANSLATIONS = {
 
 const TRANSLATIONS = {
   de: {
-    page_title: "Arena DJ Soundboard – Wettkampf-Musiksteuerung",
+    page_title: "Arena DJ Wettkampf Soundboard by uWiiiDev",
     resume_banner_default: "▶️ Wiedergabe lief vor dem Neuladen – antippen zum nahtlosen Fortsetzen!",
     resume_dynamic: "▶️ „{title}“ lief vor dem Neuladen ({time}) – 1× tippen zum Weiterhören!",
     resume_btn: "▶️ Sofort fortsetzen",
-    brand_sub: "Wettkampf-Soundboard",
+    brand_sub: "Wettkampf Soundboard by uWiiiDev",
     output_group_aria: "Ton-Ausgabe wählen",
     out_server_label: "🔊 Server-Ton",
     out_server_title: "Ton läuft zentral über den Server-PC (Hallen-Anlage) – Neuladen auf iPad/Handy unterbricht den Ton NIEMALS!",
@@ -311,11 +311,11 @@ const TRANSLATIONS = {
   },
 
   en: {
-    page_title: "Arena DJ Soundboard – Competition Music Control",
+    page_title: "Arena DJ Competition Soundboard by uWiiiDev",
     resume_banner_default: "▶️ Playback was running before reload – tap to resume seamlessly!",
     resume_dynamic: "▶️ “{title}” was playing before reload ({time}) – tap once to resume!",
     resume_btn: "▶️ Resume now",
-    brand_sub: "Competition Soundboard",
+    brand_sub: "Competition Soundboard by uWiiiDev",
     output_group_aria: "Select audio output",
     out_server_label: "🔊 Server Audio",
     out_server_title: "Audio plays centrally on the server PC (venue PA) – reloading on iPad/phone NEVER interrupts the music!",
@@ -588,11 +588,11 @@ const TRANSLATIONS = {
   },
 
   fr: {
-    page_title: "Arena DJ Soundboard – Régie musicale de compétition",
+    page_title: "Arena DJ Soundboard de compétition by uWiiiDev",
     resume_banner_default: "▶️ La lecture était en cours avant le rechargement – appuyez pour reprendre sans coupure !",
     resume_dynamic: "▶️ « {title} » était en cours ({time}) – appuyez une fois pour reprendre !",
     resume_btn: "▶️ Reprendre",
-    brand_sub: "Soundboard de compétition",
+    brand_sub: "Soundboard de compétition by uWiiiDev",
     output_group_aria: "Choisir la sortie audio",
     out_server_label: "🔊 Son Serveur",
     out_server_title: "Le son sort sur le PC serveur (sono de la salle) – recharger la page sur iPad/mobile ne coupe JAMAIS la musique !",
