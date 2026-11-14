@@ -3477,6 +3477,42 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("shutdownServerBtn")?.addEventListener("click", triggerServerShutdown);
   document.getElementById("shutdownServerHeaderBtn")?.addEventListener("click", triggerServerShutdown);
 
+  // Vollbild-Button (Fullscreen API inkl. WebKit/iPadOS Unterstützung)
+  const fullscreenBtn = document.getElementById("fullscreenBtn");
+  const fsIconEnter = document.getElementById("fullscreenIconEnter");
+  const fsIconExit = document.getElementById("fullscreenIconExit");
+
+  function syncFullscreenButtonState() {
+    const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+    if (fullscreenBtn) fullscreenBtn.classList.toggle("active", isFs);
+    if (fsIconEnter) fsIconEnter.classList.toggle("hidden", isFs);
+    if (fsIconExit) fsIconExit.classList.toggle("hidden", !isFs);
+  }
+
+  fullscreenBtn?.addEventListener("click", async () => {
+    try {
+      const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+      if (!isFs) {
+        const docEl = document.documentElement;
+        if (docEl.requestFullscreen) {
+          await docEl.requestFullscreen();
+        } else if (docEl.webkitRequestFullscreen) {
+          docEl.webkitRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen();
+        }
+      }
+    } catch (_) {}
+    syncFullscreenButtonState();
+  });
+
+  document.addEventListener("fullscreenchange", syncFullscreenButtonState);
+  document.addEventListener("webkitfullscreenchange", syncFullscreenButtonState);
+
   document.getElementById("closeSettingsBtn").addEventListener("click", () => {
     settingsModal.classList.add("hidden");
   });
