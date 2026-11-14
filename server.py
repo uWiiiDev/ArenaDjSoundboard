@@ -745,6 +745,7 @@ def init_db():
         "master_volume": "0.85",
         "auto_fade_enabled": "true",
         "auto_next_enabled": "true",
+        "shuffle_enabled": "false",
         "crossfade_enabled": "true",
         "crossfade_duration": "4.0",
         "auth_enabled": "true",
@@ -1674,7 +1675,12 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         elif action == "stop":
             PLAYER_ENGINE.stop_immediate()
         elif action == "skip_next":
-            PLAYER_ENGINE.skip_next(settings)
+            active_category = str(data.get("active_category") or "")
+            PLAYER_ENGINE.skip_next(settings, active_category=active_category or None)
+        elif action == "set_category":
+            with PLAYER_ENGINE.lock:
+                PLAYER_ENGINE.active_category = str(data.get("active_category") or "all")
+                PLAYER_ENGINE.planned_next_track_id = None
         elif action == "seek":
             PLAYER_ENGINE.seek(float(data.get("time", 0.0)))
         elif action == "talkover":

@@ -16,6 +16,7 @@ const state = {
     master_volume: 0.85,
     auto_fade_enabled: true,
     auto_next_enabled: true,
+    shuffle_enabled: false,
     crossfade_enabled: true,
     view_mode: "grid",
     language: getLang(),
@@ -52,6 +53,9 @@ const state = {
   pendingResumeSnapshot: null,
   autoFollowEnabled: true,
   lastScrolledTrackId: null,
+  shuffleHistory: [],
+  plannedNextTrackId: null,
+  serverNextTrackId: null,
 
   // Live Player State
   currentTrack: null,
@@ -320,6 +324,11 @@ function applyServerPlayerStatus(ps) {
   state.isTalkoverActive = Boolean(ps.is_talkover_active);
   state.serverCurrentTime = Number(ps.current_time || 0);
   state.serverEffectivePct = Number(ps.effective_volume_pct ?? 85);
+  state.serverNextTrackId = ps.next_track_id ? Number(ps.next_track_id) : null;
+  if (typeof ps.shuffle_enabled === "boolean" && ps.shuffle_enabled !== state.settings.shuffle_enabled) {
+    state.settings.shuffle_enabled = ps.shuffle_enabled;
+    syncControlsWithSettings();
+  }
 
   if (ps.current_track_id) {
     const found = state.tracks.find((t) => t.id === ps.current_track_id);
@@ -556,6 +565,14 @@ async function triggerTrackCue(track, cue, options = {}) {
   state.manualStopOrFade = false;
   state.isFadingOut = false;
 
+  if (track && track.id) {
+    state.shuffleHistory.push(track.id);
+    if (state.shuffleHistory.length > 250) {
+      state.shuffleHistory = state.shuffleHistory.slice(-250);
+    }
+  }
+  state.plannedNextTrackId = null;
+
   targetDeck.trackVolume = track.volume || 1.0;
   targetDeck.fadeGain = fadeInSec > 0.06 ? 0.01 : 1.0;
   applyEffectiveVolume();
@@ -604,34 +621,68 @@ async function triggerTrackCue(track, cue, options = {}) {
   }
 }
 
-function getNextTrack() {
+function getCandidateTrackPool() {
+  if (!state.currentTrack || state.tracks.length === 0) return [];
+  const visible = getFilteredTracks();
+  if (visible.length > 0 && visible.some((tr) => tr.id === state.currentTrack.id)) {
+    return visible;
+  }
+  const sameCat = state.tracks.filter((tr) => tr.category_id === state.currentTrack.category_id);
+  if (sameCat.length > 0 && sameCat.some((tr) => tr.id === state.currentTrack.id)) {
+    return sameCat;
+  }
+  return state.tracks;
+}
+
+function getNextTrack(consumePlanned = false) {
   if (!state.currentTrack || state.tracks.length === 0) return null;
 
-  // 1. Zuerst in der aktuell angezeigten Liste schauen
-  const visible = getFilteredTracks();
-  const visIdx = visible.findIndex((t) => t.id === state.currentTrack.id);
-  if (visIdx !== -1 && visible.length > 0) {
-    return visible[(visIdx + 1) % visible.length];
+  if (isServerMode() && state.serverNextTrackId && !consumePlanned) {
+    const srvNext = state.tracks.find((tr) => tr.id === state.serverNextTrackId);
+    if (srvNext) return srvNext;
   }
 
-  // 2. Fallback: innerhalb derselben Kategorie weiterspielen
-  const sameCat = state.tracks.filter((t) => t.category_id === state.currentTrack.category_id);
-  const catIdx = sameCat.findIndex((t) => t.id === state.currentTrack.id);
-  if (catIdx !== -1 && sameCat.length > 0) {
-    return sameCat[(catIdx + 1) % sameCat.length];
+  const pool = getCandidateTrackPool();
+  if (pool.length === 0) return null;
+
+  if (state.settings.shuffle_enabled) {
+    if (pool.length === 1) return pool[0];
+
+    if (state.plannedNextTrackId !== null) {
+      const planned = pool.find(
+        (tr) => tr.id === state.plannedNextTrackId && tr.id !== state.currentTrack.id
+      );
+      if (planned) {
+        if (consumePlanned) state.plannedNextTrackId = null;
+        return planned;
+      }
+    }
+
+    const candidates = pool.filter((tr) => tr.id !== state.currentTrack.id);
+    const recentWindow = Math.max(0, pool.length - 1);
+    const recentSet = new Set(
+      recentWindow > 0 ? state.shuffleHistory.slice(-recentWindow) : []
+    );
+    const fresh = candidates.filter((tr) => !recentSet.has(tr.id));
+    const bucket = fresh.length > 0 ? fresh : candidates;
+    const chosen = bucket[Math.floor(Math.random() * bucket.length)];
+    state.plannedNextTrackId = consumePlanned ? null : chosen.id;
+    return chosen;
   }
 
-  // 3. Fallback: gesamte Liederliste
-  const allIdx = state.tracks.findIndex((t) => t.id === state.currentTrack.id);
-  return state.tracks[(allIdx + 1) % state.tracks.length];
+  const idx = pool.findIndex((tr) => tr.id === state.currentTrack.id);
+  if (idx !== -1) {
+    return pool[(idx + 1) % pool.length];
+  }
+  return pool[0];
 }
 
 function playNextTrack(options = {}) {
   if (isServerMode()) {
-    sendServerCommand({ action: "skip_next" });
+    sendServerCommand({ action: "skip_next", active_category: state.activeCategory });
     return;
   }
-  const nextTrack = getNextTrack();
+  const nextTrack = getNextTrack(true);
   if (!nextTrack) return;
   triggerTrackCue(nextTrack, null, options);
 }
@@ -644,8 +695,13 @@ function togglePlayPause() {
 
   ensureAudioContext();
   if (!state.currentTrack) {
-    if (state.tracks.length > 0) {
-      triggerTrackCue(state.tracks[0], null);
+    const visible = getFilteredTracks();
+    const startPool = visible.length > 0 ? visible : state.tracks;
+    if (startPool.length > 0) {
+      const firstTrack = state.settings.shuffle_enabled
+        ? startPool[Math.floor(Math.random() * startPool.length)]
+        : startPool[0];
+      triggerTrackCue(firstTrack, null);
     }
     return;
   }
@@ -889,6 +945,7 @@ async function loadStateFromServer() {
     }
     state.settings.auto_fade_enabled = data.settings.auto_fade_enabled !== "false";
     state.settings.auto_next_enabled = data.settings.auto_next_enabled !== "false";
+    state.settings.shuffle_enabled = data.settings.shuffle_enabled === "true";
     state.settings.crossfade_enabled = data.settings.crossfade_enabled !== "false";
     state.settings.view_mode = data.settings.view_mode === "list" ? "list" : "grid";
     if (data.settings.language && data.settings.language !== getLang()) {
@@ -975,6 +1032,17 @@ function syncControlsWithSettings() {
 
   document.getElementById("autoFadeToggle").checked = state.settings.auto_fade_enabled;
   document.getElementById("autoNextToggle").checked = state.settings.auto_next_enabled;
+  const shuffleToggleEl = document.getElementById("shuffleToggle");
+  if (shuffleToggleEl) {
+    shuffleToggleEl.checked = Boolean(state.settings.shuffle_enabled);
+  }
+  const shuffleQuickBtn = document.getElementById("shuffleQuickBtn");
+  if (shuffleQuickBtn) {
+    shuffleQuickBtn.classList.toggle("active", Boolean(state.settings.shuffle_enabled));
+    shuffleQuickBtn.title = state.settings.shuffle_enabled
+      ? t("shuffle_on_title")
+      : t("shuffle_off_title");
+  }
   document.getElementById("crossfadeToggle").checked = state.settings.crossfade_enabled;
   document.getElementById("autoFadeInfo").textContent = `${state.settings.fade_in_duration}s`;
   document.getElementById("crossfadeInfo").textContent = `${state.settings.crossfade_duration}s`;
@@ -1014,6 +1082,23 @@ async function setViewMode(mode) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ view_mode: cleanMode }),
   });
+}
+
+async function setShuffleEnabled(enabled) {
+  const nextVal = Boolean(enabled);
+  state.settings.shuffle_enabled = nextVal;
+  state.plannedNextTrackId = null;
+  syncControlsWithSettings();
+  updatePlayerUI();
+
+  await fetch("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ shuffle_enabled: String(nextVal) }),
+  });
+  if (isServerMode()) {
+    await pollServerPlayerStatus();
+  }
 }
 
 async function toggleTrackLoop(trackId) {
@@ -1473,8 +1558,12 @@ function updatePlayerUI() {
       if (state.currentTrack.loop) {
         npNextText.textContent = t("np_next_loop");
       } else if (state.settings.auto_next_enabled) {
-        const nextT = getNextTrack();
-        const modeIcon = state.settings.crossfade_enabled
+        const nextT = getNextTrack(false);
+        const modeIcon = state.settings.shuffle_enabled
+          ? state.settings.crossfade_enabled
+            ? t("np_next_shuffle_xfade")
+            : t("np_next_shuffle")
+          : state.settings.crossfade_enabled
           ? t("np_next_xfade")
           : t("np_next_after");
         npNextText.textContent = nextT
@@ -1906,8 +1995,22 @@ document.addEventListener("DOMContentLoaded", () => {
     categorySelect.addEventListener("pointerdown", (e) => e.stopPropagation());
     categorySelect.addEventListener("change", (e) => {
       state.activeCategory = e.target.value || "all";
+      state.plannedNextTrackId = null;
       categorySelect.classList.toggle("is-filtered", state.activeCategory !== "all");
       renderSoundboard();
+      updatePlayerUI();
+      if (isServerMode()) {
+        sendServerCommand({ action: "set_category", active_category: state.activeCategory });
+      }
+    });
+  }
+
+  // Shuffle-Button in der Kopfzeile der Liederliste (nur Symbol, ohne Textbeschriftung)
+  const shuffleQuickBtn = document.getElementById("shuffleQuickBtn");
+  if (shuffleQuickBtn) {
+    shuffleQuickBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setShuffleEnabled(!state.settings.shuffle_enabled);
     });
   }
 
@@ -2122,6 +2225,13 @@ document.addEventListener("DOMContentLoaded", () => {
       body: JSON.stringify({ auto_next_enabled: String(e.target.checked) }),
     });
   });
+
+  const shuffleToggleEl = document.getElementById("shuffleToggle");
+  if (shuffleToggleEl) {
+    shuffleToggleEl.addEventListener("change", (e) => {
+      setShuffleEnabled(e.target.checked);
+    });
+  }
 
   document.getElementById("crossfadeToggle").addEventListener("change", (e) => {
     state.settings.crossfade_enabled = e.target.checked;

@@ -66,6 +66,9 @@ const TRANSLATIONS = {
     autofollow_aria: "Auto-Mitlauf",
     autofollow_on_title: "Auto-Mitlauf aktiv: Liste läuft bei Liedwechsel automatisch zum aktiven Titel mit",
     autofollow_off_title: "Auto-Mitlauf deaktiviert (manuelles Scrollen)",
+    shuffle_aria: "Zufallswiedergabe (Shuffle)",
+    shuffle_on_title: "Shuffle aktiv: Nächstes Lied wird zufällig ausgewählt",
+    shuffle_off_title: "Shuffle deaktiviert (Reihenfolge nach Liste)",
 
     drop_title: "MP3 / Audio-Dateien hier ablegen",
     drop_sub_default: "Zuordnung zur ausgewählten Kategorie",
@@ -107,6 +110,7 @@ const TRANSLATIONS = {
     talkover_desc: "Musik sanft auf {pct}% absenken",
     autofade_label: "Auto-Fade",
     autonext_label: "Automatisch nächstes Lied",
+    shuffle_label: "🔀 Zufallswiedergabe (Shuffle)",
     crossfade_label: "Crossfade",
 
     // Now Playing Deck & Mobile Dock
@@ -126,6 +130,8 @@ const TRANSLATIONS = {
     np_next_loop: "🔁 Endlosschleife aktiv (wiederholt diesen Titel)",
     np_next_xfade: "🔀 Crossfade",
     np_next_after: "⏭ Danach",
+    np_next_shuffle: "🔀 Zufall",
+    np_next_shuffle_xfade: "🔀 Zufall (Crossfade)",
     np_next_stop: "⏹ Stoppt am Liedende",
     skip_next_btn: "⏭ Nächstes",
     skip_next_title: "Sofort zum nächsten Lied springen",
@@ -306,6 +312,9 @@ const TRANSLATIONS = {
     autofollow_aria: "Auto-follow",
     autofollow_on_title: "Auto-follow active: list automatically scrolls to the playing track",
     autofollow_off_title: "Auto-follow disabled (manual scrolling)",
+    shuffle_aria: "Shuffle playback",
+    shuffle_on_title: "Shuffle active: next track is chosen randomly",
+    shuffle_off_title: "Shuffle disabled (sequential order)",
 
     drop_title: "Drop MP3 / audio files here",
     drop_sub_default: "Assigned to the selected category",
@@ -347,6 +356,7 @@ const TRANSLATIONS = {
     talkover_desc: "Smoothly duck music to {pct}%",
     autofade_label: "Auto-Fade",
     autonext_label: "Auto-play next track",
+    shuffle_label: "🔀 Shuffle playback",
     crossfade_label: "Crossfade",
 
     // Now Playing Deck & Mobile Dock
@@ -366,6 +376,8 @@ const TRANSLATIONS = {
     np_next_loop: "🔁 Endless loop active (repeating this track)",
     np_next_xfade: "🔀 Crossfade",
     np_next_after: "⏭ Up next",
+    np_next_shuffle: "🔀 Shuffle",
+    np_next_shuffle_xfade: "🔀 Shuffle (Crossfade)",
     np_next_stop: "⏹ Stops at end of track",
     skip_next_btn: "⏭ Next",
     skip_next_title: "Skip immediately to the next track",
@@ -546,6 +558,9 @@ const TRANSLATIONS = {
     autofollow_aria: "Suivi automatique",
     autofollow_on_title: "Suivi auto actif : la liste défile automatiquement vers le titre en cours",
     autofollow_off_title: "Suivi auto désactivé (défilement manuel)",
+    shuffle_aria: "Lecture aléatoire (Shuffle)",
+    shuffle_on_title: "Mode aléatoire actif : le titre suivant est choisi au hasard",
+    shuffle_off_title: "Mode aléatoire désactivé (ordre de la liste)",
 
     drop_title: "Déposez vos fichiers MP3 / audio ici",
     drop_sub_default: "Affectation à la catégorie sélectionnée",
@@ -587,6 +602,7 @@ const TRANSLATIONS = {
     talkover_desc: "Baisser doucement la musique à {pct}%",
     autofade_label: "Fondu auto",
     autonext_label: "Titre suivant automatique",
+    shuffle_label: "🔀 Lecture aléatoire (Shuffle)",
     crossfade_label: "Fondu enchaîné",
 
     // Now Playing Deck & Mobile Dock
@@ -606,6 +622,8 @@ const TRANSLATIONS = {
     np_next_loop: "🔁 Boucle infinie active (répète ce titre)",
     np_next_xfade: "🔀 Fondu enchaîné",
     np_next_after: "⏭ À suivre",
+    np_next_shuffle: "🔀 Aléatoire",
+    np_next_shuffle_xfade: "🔀 Aléatoire (Fondu)",
     np_next_stop: "⏹ S'arrête à la fin du titre",
     skip_next_btn: "⏭ Suivant",
     skip_next_title: "Passer immédiatement au titre suivant",

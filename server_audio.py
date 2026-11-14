@@ -7,6 +7,7 @@ läuft die Musik inkl. Crossfade, Master-Fader, Talkover & Auto-Next unterbrechu
 
 import math
 from pathlib import Path
+import random
 import shutil
 import subprocess
 import threading
@@ -206,6 +207,9 @@ class ServerAudioEngine:
         self.manual_stop = False
         self.advance_after_fade = False
         self.active_category = "all"
+        self.shuffle_enabled = False
+        self.shuffle_history: list[int] = []
+        self.planned_next_track_id: int | None = None
 
         self.output_proc: subprocess.Popen | None = None
         self.audio_available = bool(
@@ -220,6 +224,10 @@ class ServerAudioEngine:
     def sync_settings(self, settings: dict[str, str]):
         with self.lock:
             self.master_volume = float(settings.get("master_volume", 0.85))
+            new_shuffle = settings.get("shuffle_enabled", "false") == "true"
+            if new_shuffle != self.shuffle_enabled:
+                self.shuffle_enabled = new_shuffle
+                self.planned_next_track_id = None
 
     def _open_output_sink(self) -> subprocess.Popen | None:
         if shutil.which("pw-play"):
@@ -368,6 +376,13 @@ class ServerAudioEngine:
             target.loop = bool(track.get("loop", False))
             target.start_ffmpeg(filepath, start_time)
 
+            tid = track.get("id")
+            if tid is not None:
+                self.shuffle_history.append(int(tid))
+                if len(self.shuffle_history) > 250:
+                    self.shuffle_history = self.shuffle_history[-250:]
+            self.planned_next_track_id = None
+
             if fade_in_sec > 0.05:
                 target.set_fade(0.01, 1.0, fade_in_sec, curve=curve_in, stop_after=False)
             else:
@@ -380,7 +395,10 @@ class ServerAudioEngine:
             if active.track is None:
                 tracks, _ = self.get_state_fn()
                 if tracks:
-                    first = tracks[0]
+                    if self.shuffle_enabled:
+                        first = random.choice(tracks)
+                    else:
+                        first = tracks[0]
                     self.trigger_cue(first, None, settings)
                 return
 
@@ -469,33 +487,76 @@ class ServerAudioEngine:
                     d.track_volume = float(ut.get("volume") or 1.0)
                     d.loop = bool(ut.get("loop", False))
 
-    def _pick_next_track(self, current_track: dict, tracks: list[dict]) -> dict | None:
+    def _get_candidate_pool(self, current_track: dict, tracks: list[dict]) -> list[dict]:
         if not tracks:
-            return None
+            return []
         if self.active_category and self.active_category != "all":
             cat_list = [t for t in tracks if t.get("category_id") == self.active_category]
-            idx = next((i for i, t in enumerate(cat_list) if t["id"] == current_track["id"]), -1)
-            if idx != -1 and cat_list:
-                return cat_list[(idx + 1) % len(cat_list)]
-
+            if cat_list and any(t["id"] == current_track["id"] for t in cat_list):
+                return cat_list
+        if self.active_category == "all":
+            return tracks
         same_cat = [
             t for t in tracks if t.get("category_id") == current_track.get("category_id")
         ]
-        idx = next((i for i, t in enumerate(same_cat) if t["id"] == current_track["id"]), -1)
-        if idx != -1 and same_cat:
-            return same_cat[(idx + 1) % len(same_cat)]
+        if same_cat:
+            return same_cat
+        return tracks
 
-        all_idx = next((i for i, t in enumerate(tracks) if t["id"] == current_track["id"]), 0)
-        return tracks[(all_idx + 1) % len(tracks)]
+    def _pick_next_track(
+        self, current_track: dict, tracks: list[dict], consume_planned: bool = True
+    ) -> dict | None:
+        pool = self._get_candidate_pool(current_track, tracks)
+        if not pool:
+            return None
 
-    def skip_next(self, settings: dict[str, str]):
+        if self.shuffle_enabled:
+            if len(pool) == 1:
+                return pool[0]
+
+            # Falls bereits ein Zufalls-Kandidat für die Vorab-Anzeige ausgelost wurde
+            if self.planned_next_track_id is not None:
+                planned = next(
+                    (
+                        t
+                        for t in pool
+                        if t["id"] == self.planned_next_track_id
+                        and t["id"] != current_track["id"]
+                    ),
+                    None,
+                )
+                if planned is not None:
+                    if consume_planned:
+                        self.planned_next_track_id = None
+                    return planned
+
+            candidates = [t for t in pool if t["id"] != current_track["id"]]
+            recent_window = max(0, len(pool) - 1)
+            recent_ids = set(self.shuffle_history[-recent_window:]) if recent_window > 0 else set()
+            fresh = [t for t in candidates if t["id"] not in recent_ids]
+            chosen = random.choice(fresh if fresh else candidates)
+            if not consume_planned:
+                self.planned_next_track_id = chosen["id"]
+            else:
+                self.planned_next_track_id = None
+            return chosen
+
+        idx = next((i for i, t in enumerate(pool) if t["id"] == current_track["id"]), -1)
+        if idx != -1:
+            return pool[(idx + 1) % len(pool)]
+        return pool[0]
+
+    def skip_next(self, settings: dict[str, str], active_category: str | None = None):
         with self.lock:
+            self.sync_settings(settings)
+            if active_category:
+                self.active_category = active_category
             tracks, _ = self.get_state_fn()
             active = self.decks[self.active_idx]
             cur_track = active.track or (tracks[0] if tracks else None)
             if not cur_track:
                 return
-            nxt = self._pick_next_track(cur_track, tracks)
+            nxt = self._pick_next_track(cur_track, tracks, consume_planned=True)
             if not nxt:
                 return
             xfade_on = settings.get("crossfade_enabled", "true") != "false"
@@ -519,13 +580,25 @@ class ServerAudioEngine:
                 peak_fade = 1.0
             eff_pct = round(self.master_volume * self.duck_multiplier * peak_fade * 100)
 
+            next_track_id = None
+            if active.track:
+                try:
+                    tracks, _ = self.get_state_fn()
+                    nxt = self._pick_next_track(active.track, tracks, consume_planned=False)
+                    if nxt:
+                        next_track_id = nxt["id"]
+                except Exception:
+                    pass
+
             return {
                 "audio_available": self.audio_available,
                 "is_playing": not active.paused,
                 "is_fading_out": self.is_fading_out,
                 "is_crossfading": self.is_crossfading and (not other.paused),
                 "is_talkover_active": self.is_talkover,
+                "shuffle_enabled": self.shuffle_enabled,
                 "current_track_id": active.track["id"] if active.track else None,
+                "next_track_id": next_track_id,
                 "current_cue": active.cue,
                 "current_time": round(active.current_time, 2),
                 "duration": round(active.duration, 2),
@@ -647,12 +720,13 @@ class ServerAudioEngine:
 
     def _auto_advance_locked(self, use_crossfade: bool = False, crossfade_sec: float | None = None):
         tracks, settings = self.get_state_fn()
+        self.sync_settings(settings)
         if settings.get("auto_next_enabled", "true") == "false" or not tracks:
             return
         active = self.decks[self.active_idx]
         if not active.track:
             return
-        nxt = self._pick_next_track(active.track, tracks)
+        nxt = self._pick_next_track(active.track, tracks, consume_planned=True)
         if not nxt:
             return
         self.trigger_cue(

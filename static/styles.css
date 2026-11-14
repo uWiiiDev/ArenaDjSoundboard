@@ -458,7 +458,8 @@ body {
   border-radius: 99px;
 }
 
-.btn-follow-pill {
+.btn-follow-pill,
+.btn-shuffle-pill {
   width: 30px;
   height: 30px;
   padding: 0;
@@ -489,6 +490,23 @@ body {
 
 .btn-follow-pill.active:hover {
   background: #16a34a;
+  color: #ffffff;
+}
+
+.btn-shuffle-pill:hover {
+  color: var(--text-main);
+  border-color: var(--accent-orange);
+}
+
+.btn-shuffle-pill.active {
+  background: var(--accent-orange);
+  border-color: #fdba74;
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(249, 115, 22, 0.55);
+}
+
+.btn-shuffle-pill.active:hover {
+  background: #ea580c;
   color: #ffffff;
 }
 

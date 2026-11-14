@@ -144,6 +144,23 @@
 
           <button
             type="button"
+            class="btn-shuffle-pill"
+            id="shuffleQuickBtn"
+            data-i18n-aria="shuffle_aria"
+            title="Shuffle deaktiviert (Reihenfolge nach Liste)"
+            aria-label="Zufallswiedergabe (Shuffle)"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="16 3 21 3 21 8"></polyline>
+              <line x1="4" y1="20" x2="21" y2="3"></line>
+              <polyline points="21 16 21 21 16 21"></polyline>
+              <line x1="15" y1="15" x2="21" y2="21"></line>
+              <line x1="4" y1="4" x2="9" y2="9"></line>
+            </svg>
+          </button>
+
+          <button
+            type="button"
             class="btn-follow-pill active"
             id="autoFollowBtn"
             data-i18n-aria="autofollow_aria"
@@ -259,6 +276,10 @@
               <label class="toggle-row">
                 <input type="checkbox" id="autoNextToggle" checked />
                 <span class="toggle-text" data-i18n="autonext_label">Automatisch nächstes Lied</span>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" id="shuffleToggle" />
+                <span class="toggle-text" data-i18n="shuffle_label">🔀 Zufallswiedergabe (Shuffle)</span>
               </label>
               <label class="toggle-row">
                 <input type="checkbox" id="crossfadeToggle" checked />
