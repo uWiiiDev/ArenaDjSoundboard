@@ -3443,6 +3443,40 @@ document.addEventListener("DOMContentLoaded", () => {
     window.location.replace("/");
   });
 
+  async function triggerServerShutdown() {
+    if (!confirm(t("confirm_shutdown_server"))) {
+      return;
+    }
+    state.manualStopOrFade = true;
+    clearLocalPlaybackSnapshot();
+    cancelAllDeckFades();
+    decks.forEach((d) => {
+      d.audio.pause();
+      d.fadeGain = 0;
+    });
+    state.isPlaying = false;
+
+    try {
+      await fetch("/api/system/shutdown", { method: "POST" });
+    } catch (_) {}
+
+    const overlay = document.createElement("div");
+    overlay.className = "shutdown-overlay";
+    overlay.innerHTML = `
+      <h2>${escapeHtml(t("shutdown_done_title"))}</h2>
+      <p>${escapeHtml(t("shutdown_done_sub"))}</p>
+    `;
+    document.body.appendChild(overlay);
+    setTimeout(() => {
+      try {
+        window.close();
+      } catch (_) {}
+    }, 300);
+  }
+
+  document.getElementById("shutdownServerBtn")?.addEventListener("click", triggerServerShutdown);
+  document.getElementById("shutdownServerHeaderBtn")?.addEventListener("click", triggerServerShutdown);
+
   document.getElementById("closeSettingsBtn").addEventListener("click", () => {
     settingsModal.classList.add("hidden");
   });

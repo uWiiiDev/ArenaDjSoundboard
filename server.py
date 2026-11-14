@@ -1716,6 +1716,9 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/system/update":
             return self.handle_system_update()
 
+        if path == "/api/system/shutdown":
+            return self.handle_system_shutdown()
+
         if path == "/api/spotdl/start":
             return self.handle_spotdl_start()
 
@@ -2293,6 +2296,29 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                 os.execv(sys.executable, [sys.executable, target_script, *sys.argv[1:]])
 
             threading.Thread(target=_restart_process, daemon=True).start()
+
+    def handle_system_shutdown(self):
+        self.send_json({"ok": True})
+        server_ref = self.server
+
+        def _shutdown_process():
+            time.sleep(0.35)
+            try:
+                cancel_spotdl_download_job()
+            except Exception:
+                pass
+            try:
+                if PLAYER_ENGINE:
+                    PLAYER_ENGINE.stop_immediate()
+            except Exception:
+                pass
+            try:
+                server_ref.server_close()
+            except Exception:
+                pass
+            os._exit(0)
+
+        threading.Thread(target=_shutdown_process, daemon=True).start()
 
     def handle_spotdl_start(self):
         data = self.read_json_body()

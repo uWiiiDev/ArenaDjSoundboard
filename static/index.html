@@ -110,6 +110,21 @@
           <line x1="12" y1="3" x2="12" y2="15"></line>
         </svg>
       </button>
+
+      <button
+        type="button"
+        class="btn btn-secondary btn-icon-only btn-power-header"
+        id="shutdownServerHeaderBtn"
+        data-i18n-title="shutdown_btn_title"
+        data-i18n-aria="shutdown_btn_title"
+        title="Programm / Hintergrund-Server komplett beenden"
+        aria-label="Programm / Hintergrund-Server komplett beenden"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+          <line x1="12" y1="2" x2="12" y2="12"></line>
+        </svg>
+      </button>
     </div>
   </header>
 
@@ -767,7 +782,8 @@
       </div>
 
       <div class="modal-footer">
-        <button type="button" class="btn btn-danger" id="logoutDeviceBtn" data-i18n="logout_btn" data-i18n-title="logout_title" title="Dieses Gerät abmelden und sperren">🔒 Gerät abmelden</button>
+        <button type="button" class="btn btn-danger" id="shutdownServerBtn" data-i18n="shutdown_btn" data-i18n-title="shutdown_btn_title" title="Programm / Hintergrund-Server komplett beenden">⏻ Server beenden</button>
+        <button type="button" class="btn btn-secondary" id="logoutDeviceBtn" data-i18n="logout_btn" data-i18n-title="logout_title" title="Dieses Gerät abmelden und sperren">🔒 Gerät abmelden</button>
         <button class="btn btn-primary" id="saveSettingsBtn" data-i18n="save_settings_btn">💾 Einstellungen speichern</button>
       </div>
     </div>

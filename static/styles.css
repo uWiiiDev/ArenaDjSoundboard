@@ -2837,5 +2837,44 @@ body[data-theme="studio"] .quick-vol-btn.active {
   background: rgba(239, 68, 68, 0.11) !important;
 }
 
+.btn-power-header {
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.btn-power-header:hover {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: #ef4444;
+  color: #fecaca;
+}
+
+.shutdown-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: rgba(8, 10, 14, 0.96);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  gap: 12px;
+}
+
+.shutdown-overlay h2 {
+  font-size: 1.45rem;
+  color: #f8fafc;
+  margin: 0;
+}
+
+.shutdown-overlay p {
+  font-size: 0.95rem;
+  color: #94a3b8;
+  max-width: 460px;
+  margin: 0;
+}
+
+
 
 
