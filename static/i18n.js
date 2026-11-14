@@ -195,9 +195,12 @@ const TRANSLATIONS = {
     confirm_delete_track: "Möchtest du „{title}“ wirklich dauerhaft löschen?",
     unnamed_track: "Unbenannt",
 
-    // Upload Modal
-    upload_modal_title: "➕ MP3 / Audio-Dateien hinzufügen",
-    upload_modal_sub: "Hochgeladene Lieder werden dauerhaft auf dem Server gespeichert und stehen auch beim nächsten Wettkampf bereit.",
+    // Upload Modal & Spotify / spotDL
+    spotify_btn_title: "Spotify-Playlist / Song als MP3 herunterladen (spotDL)",
+    upload_modal_title: "➕ Lieder hinzufügen (MP3 & Spotify)",
+    upload_modal_sub: "Lade eigene Audiodateien hoch oder importiere komplette Spotify-Playlists direkt als MP3.",
+    upload_tab_files: "📁 Lokale MP3-Dateien",
+    upload_tab_spotdl: "🟢 Spotify / Playlist (spotDL)",
     dropzone_title: "MP3-Dateien hier ablegen oder antippen zum Auswählen",
     dropzone_sub_default: "Mehrfachauswahl möglich (MP3, WAV, M4A, OGG)",
     dropzone_files_selected: "{count} Datei(en) ausgewählt: {names}",
@@ -207,6 +210,15 @@ const TRANSLATIONS = {
     cancel_btn: "Abbrechen",
     submit_upload_btn: "⬆️ Jetzt hochladen & speichern",
     err_upload_alert: "Fehler beim Hochladen: {err}",
+    spotdl_intro_title: "🟢 Spotify-Playlists & Songs als MP3 laden (spotDL)",
+    spotdl_intro_sub: "Füge einen öffentlichen Spotify-Playlist-, Song- oder Album-Link (oder direkte Suchbegriffe) ein. spotDL lädt die Lieder als MP3 inkl. Titel, Interpret und Wellenform direkt ins Soundboard.",
+    spotdl_query_label: "Spotify-URL (Playlist, Song, Album) oder Suchbegriff",
+    spotdl_query_ph: "https://open.spotify.com/playlist/... oder Interpret - Liedtitel",
+    spotdl_auto_cat_opt: "✨ Automatisch neue Kategorie mit Playlist-Namen anlegen",
+    spotdl_start_btn: "⬇️ Als MP3 herunterladen",
+    spotdl_stop_btn: "⏹ Download stoppen",
+    spotdl_running_btn: "⏳ Download läuft...",
+    spotdl_err_empty: "Bitte einen Spotify-Link oder Suchbegriff eingeben.",
 
     // Settings Modal
     settings_title: "⚙️ Einstellungen",
@@ -445,9 +457,12 @@ const TRANSLATIONS = {
     confirm_delete_track: "Do you really want to permanently delete “{title}”?",
     unnamed_track: "Untitled",
 
-    // Upload Modal
-    upload_modal_title: "➕ Add MP3 / Audio Files",
-    upload_modal_sub: "Uploaded tracks are stored permanently on the server and remain ready for future competitions.",
+    // Upload Modal & Spotify / spotDL
+    spotify_btn_title: "Download Spotify playlist / track as MP3 (spotDL)",
+    upload_modal_title: "➕ Add Tracks (MP3 & Spotify)",
+    upload_modal_sub: "Upload local audio files or import entire Spotify playlists directly as MP3.",
+    upload_tab_files: "📁 Local MP3 Files",
+    upload_tab_spotdl: "🟢 Spotify / Playlist (spotDL)",
     dropzone_title: "Drop MP3 files here or tap to select",
     dropzone_sub_default: "Multiple files supported (MP3, WAV, M4A, OGG)",
     dropzone_files_selected: "{count} file(s) selected: {names}",
@@ -457,6 +472,15 @@ const TRANSLATIONS = {
     cancel_btn: "Cancel",
     submit_upload_btn: "⬆️ Upload & save now",
     err_upload_alert: "Upload error: {err}",
+    spotdl_intro_title: "🟢 Download Spotify Playlists & Songs as MP3 (spotDL)",
+    spotdl_intro_sub: "Paste a public Spotify playlist, track, or album URL (or search query). spotDL downloads the songs as MP3 including title, artist, and waveform directly into the soundboard.",
+    spotdl_query_label: "Spotify URL (playlist, track, album) or search query",
+    spotdl_query_ph: "https://open.spotify.com/playlist/... or Artist - Song Title",
+    spotdl_auto_cat_opt: "✨ Auto-create new category named after playlist",
+    spotdl_start_btn: "⬇️ Download as MP3",
+    spotdl_stop_btn: "⏹ Stop download",
+    spotdl_running_btn: "⏳ Downloading...",
+    spotdl_err_empty: "Please enter a Spotify URL or search query.",
 
     // Settings Modal
     settings_title: "⚙️ Settings",
@@ -695,9 +719,12 @@ const TRANSLATIONS = {
     confirm_delete_track: "Voulez-vous vraiment supprimer définitivement « {title} » ?",
     unnamed_track: "Sans titre",
 
-    // Upload Modal
-    upload_modal_title: "➕ Ajouter des fichiers MP3 / Audio",
-    upload_modal_sub: "Les titres importés sont sauvegardés durablement sur le serveur pour toutes vos compétitions.",
+    // Upload Modal & Spotify / spotDL
+    spotify_btn_title: "Télécharger une playlist / un titre Spotify en MP3 (spotDL)",
+    upload_modal_title: "➕ Ajouter des titres (MP3 & Spotify)",
+    upload_modal_sub: "Importez des fichiers audio locaux ou téléchargez des playlists Spotify complètes en MP3.",
+    upload_tab_files: "📁 Fichiers MP3 locaux",
+    upload_tab_spotdl: "🟢 Spotify / Playlist (spotDL)",
     dropzone_title: "Déposez vos fichiers MP3 ici ou appuyez pour sélectionner",
     dropzone_sub_default: "Sélection multiple possible (MP3, WAV, M4A, OGG)",
     dropzone_files_selected: "{count} fichier(s) sélectionné(s) : {names}",
@@ -707,6 +734,15 @@ const TRANSLATIONS = {
     cancel_btn: "Annuler",
     submit_upload_btn: "⬆️ Importer & enregistrer",
     err_upload_alert: "Erreur d'importation : {err}",
+    spotdl_intro_title: "🟢 Télécharger des playlists & titres Spotify en MP3 (spotDL)",
+    spotdl_intro_sub: "Collez un lien de playlist, titre ou album Spotify public (ou une recherche). spotDL télécharge les morceaux en MP3 avec titre, artiste et forme d'onde directement dans le soundboard.",
+    spotdl_query_label: "Lien Spotify (playlist, titre, album) ou recherche",
+    spotdl_query_ph: "https://open.spotify.com/playlist/... ou Artiste - Titre",
+    spotdl_auto_cat_opt: "✨ Créer automatiquement une catégorie au nom de la playlist",
+    spotdl_start_btn: "⬇️ Télécharger en MP3",
+    spotdl_stop_btn: "⏹ Arrêter le téléchargement",
+    spotdl_running_btn: "⏳ Téléchargement...",
+    spotdl_err_empty: "Veuillez saisir un lien Spotify ou une recherche.",
 
     // Settings Modal
     settings_title: "⚙️ Paramètres",

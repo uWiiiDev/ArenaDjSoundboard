@@ -2590,20 +2590,75 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  document.getElementById("openUploadBtn").addEventListener("click", () => {
+  function populateUploadAndSpotdlCategories() {
+    const isStudio = typeof getTheme === "function" && getTheme() === "studio";
     const sel = document.getElementById("uploadCategorySelect");
-    sel.innerHTML = state.categories
-      .map(
-        (c) =>
-          `<option value="${escapeHtml(c.id)}" ${
+    if (sel) {
+      sel.innerHTML = state.categories
+        .map((c) => {
+          const prefix = isStudio ? "" : `${escapeHtml(c.icon)} `;
+          return `<option value="${escapeHtml(c.id)}" ${
             c.id === state.activeCategory ? "selected" : ""
-          }>${escapeHtml(c.icon)} ${escapeHtml(getCategoryDisplayName(c))}</option>`
-      )
-      .join("");
+          }>${prefix}${escapeHtml(getCategoryDisplayName(c))}</option>`;
+        })
+        .join("");
+    }
+
+    const spotSel = document.getElementById("spotdlCategorySelect");
+    if (spotSel) {
+      const prevVal = spotSel.value;
+      const autoOpt = `<option value="__playlist__">${escapeHtml(t("spotdl_auto_cat_opt"))}</option>`;
+      const catOpts = state.categories
+        .map((c) => {
+          const prefix = isStudio ? "" : `${escapeHtml(c.icon)} `;
+          return `<option value="${escapeHtml(c.id)}">${prefix}${escapeHtml(getCategoryDisplayName(c))}</option>`;
+        })
+        .join("");
+      spotSel.innerHTML = autoOpt + catOpts;
+      if (prevVal && Array.from(spotSel.options).some((o) => o.value === prevVal)) {
+        spotSel.value = prevVal;
+      } else {
+        spotSel.value = "__playlist__";
+      }
+    }
+  }
+
+  function setUploadModalTab(tab) {
+    const isSpotdl = tab === "spotdl";
+    const tabFilesBtn = document.getElementById("uploadTabFilesBtn");
+    const tabSpotdlBtn = document.getElementById("uploadTabSpotdlBtn");
+    const uploadFormEl = document.getElementById("uploadForm");
+    const spotdlPaneEl = document.getElementById("spotdlTabPane");
+
+    if (tabFilesBtn) tabFilesBtn.classList.toggle("active", !isSpotdl);
+    if (tabSpotdlBtn) tabSpotdlBtn.classList.toggle("active", isSpotdl);
+    if (uploadFormEl) uploadFormEl.classList.toggle("hidden", isSpotdl);
+    if (spotdlPaneEl) spotdlPaneEl.classList.toggle("hidden", !isSpotdl);
+  }
+
+  document.getElementById("uploadTabFilesBtn")?.addEventListener("click", () => {
+    setUploadModalTab("files");
+  });
+  document.getElementById("uploadTabSpotdlBtn")?.addEventListener("click", () => {
+    setUploadModalTab("spotdl");
+  });
+
+  document.getElementById("openUploadBtn").addEventListener("click", () => {
+    populateUploadAndSpotdlCategories();
     uploadFileInput.value = "";
     document.getElementById("selectedFilesLabel").textContent = t("dropzone_sub_default");
     document.getElementById("uploadProgressBox").classList.add("hidden");
+    setUploadModalTab("files");
     uploadModal.classList.remove("hidden");
+  });
+
+  document.getElementById("openSpotifyBtn")?.addEventListener("click", () => {
+    populateUploadAndSpotdlCategories();
+    setUploadModalTab("spotdl");
+    uploadModal.classList.remove("hidden");
+    setTimeout(() => {
+      document.getElementById("spotdlQueryInput")?.focus();
+    }, 60);
   });
 
   document.getElementById("closeUploadBtn").addEventListener("click", () => {
@@ -2612,6 +2667,193 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("cancelUploadBtn").addEventListener("click", () => {
     uploadModal.classList.add("hidden");
   });
+  document.getElementById("closeSpotdlTabBtn")?.addEventListener("click", () => {
+    uploadModal.classList.add("hidden");
+  });
+
+  // ==========================================================================
+  // SPOTIFY / SPOTDL DOWNLOAD LOGIK & LIVE-POLLING
+  // ==========================================================================
+  let spotdlPollTimer = null;
+  let lastSpotdlImportedCount = 0;
+
+  function renderSpotdlStatus(job) {
+    if (!job) return;
+    const progBox = document.getElementById("spotdlProgressBox");
+    const statusText = document.getElementById("spotdlStatusText");
+    const countBadge = document.getElementById("spotdlCountBadge");
+    const barFill = document.getElementById("spotdlProgressBar");
+    const importedList = document.getElementById("spotdlImportedList");
+    const logOutput = document.getElementById("spotdlLogOutput");
+    const startBtn = document.getElementById("startSpotdlBtn");
+    const stopBtn = document.getElementById("stopSpotdlBtn");
+    const headerBtn = document.getElementById("openSpotifyBtn");
+
+    if (headerBtn) {
+      headerBtn.classList.toggle("running", Boolean(job.running));
+    }
+
+    if (job.status === "idle" && !job.running && (!job.log_lines || job.log_lines.length === 0)) {
+      if (progBox) progBox.classList.add("hidden");
+      if (startBtn) {
+        startBtn.disabled = false;
+        startBtn.textContent = t("spotdl_start_btn");
+      }
+      if (stopBtn) stopBtn.classList.add("hidden");
+      return;
+    }
+
+    if (progBox) progBox.classList.remove("hidden");
+    if (statusText) statusText.textContent = job.message || "";
+
+    const done = Number(job.completed_count || 0);
+    const total = Number(job.total_count || 0);
+    if (countBadge) {
+      countBadge.textContent = total > 0 ? `${done} / ${total}` : `${done} MP3`;
+    }
+
+    if (barFill) {
+      let pct = 0;
+      if (total > 0) {
+        pct = Math.min(100, Math.round((done / total) * 100));
+        if (job.running && pct < 8) pct = 8;
+      } else if (job.running) {
+        pct = 30;
+      } else if (job.status === "done") {
+        pct = 100;
+      }
+      barFill.style.width = `${pct}%`;
+    }
+
+    if (importedList) {
+      const tracks = job.imported_tracks || [];
+      importedList.innerHTML = tracks
+        .map(
+          (tr) =>
+            `<span class="spotdl-imported-pill">✓ ${escapeHtml(
+              tr.artist ? `${tr.artist} – ${tr.title}` : tr.title
+            )}</span>`
+        )
+        .join("");
+    }
+
+    if (logOutput) {
+      const lines = job.log_lines || [];
+      logOutput.textContent = lines.join("\n");
+      logOutput.scrollTop = logOutput.scrollHeight;
+    }
+
+    if (startBtn) {
+      startBtn.disabled = Boolean(job.running);
+      startBtn.textContent = job.running ? t("spotdl_running_btn") : t("spotdl_start_btn");
+    }
+    if (stopBtn) {
+      stopBtn.classList.toggle("hidden", !job.running);
+    }
+  }
+
+  async function pollSpotdlStatus() {
+    try {
+      const res = await fetch("/api/spotdl/status");
+      if (!res.ok) return;
+      const job = await res.json();
+      renderSpotdlStatus(job);
+
+      const done = Number(job.completed_count || 0);
+      if (done > lastSpotdlImportedCount) {
+        lastSpotdlImportedCount = done;
+        await loadStateFromServer();
+        populateUploadAndSpotdlCategories();
+      }
+
+      if (!job.running) {
+        if (spotdlPollTimer) {
+          clearInterval(spotdlPollTimer);
+          spotdlPollTimer = null;
+        }
+        if (done > 0) {
+          await loadStateFromServer();
+          if (job.created_category_id) {
+            state.activeCategory = job.created_category_id;
+            renderCategories();
+            renderSoundboard();
+          }
+          populateUploadAndSpotdlCategories();
+        }
+      }
+    } catch (_) {
+      // Netzwerkfehler beim Polling ignorieren
+    }
+  }
+
+  function startSpotdlPolling() {
+    if (spotdlPollTimer) clearInterval(spotdlPollTimer);
+    spotdlPollTimer = setInterval(pollSpotdlStatus, 1200);
+    pollSpotdlStatus();
+  }
+
+  document.getElementById("startSpotdlBtn")?.addEventListener("click", async () => {
+    const queryEl = document.getElementById("spotdlQueryInput");
+    const catEl = document.getElementById("spotdlCategorySelect");
+    const colorEl = document.getElementById("spotdlColorInput");
+    const rawQuery = (queryEl?.value || "").trim();
+    if (!rawQuery) {
+      alert(t("spotdl_err_empty"));
+      queryEl?.focus();
+      return;
+    }
+
+    lastSpotdlImportedCount = 0;
+    const startBtn = document.getElementById("startSpotdlBtn");
+    if (startBtn) startBtn.disabled = true;
+
+    try {
+      const res = await fetch("/api/spotdl/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: rawQuery,
+          category_id: catEl?.value || "__playlist__",
+          fallback_category_id:
+            state.activeCategory && state.activeCategory !== "all"
+              ? state.activeCategory
+              : "action",
+          color: colorEl?.value || "#22c55e",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        alert(data.error || "Fehler beim Starten des Spotify-Downloads.");
+        if (startBtn) startBtn.disabled = false;
+        return;
+      }
+      renderSpotdlStatus(data.job);
+      startSpotdlPolling();
+    } catch (err) {
+      alert(t("err_upload_alert", { err: err.message }));
+      if (startBtn) startBtn.disabled = false;
+    }
+  });
+
+  document.getElementById("stopSpotdlBtn")?.addEventListener("click", async () => {
+    try {
+      const res = await fetch("/api/spotdl/cancel", { method: "POST" });
+      const data = await res.json();
+      if (data.job) renderSpotdlStatus(data.job);
+    } catch (_) {}
+  });
+
+  // Beim Laden prüfen, ob im Hintergrund noch ein spotDL-Job aktiv ist
+  fetch("/api/spotdl/status")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((job) => {
+      if (job && job.running) {
+        lastSpotdlImportedCount = Number(job.completed_count || 0);
+        renderSpotdlStatus(job);
+        startSpotdlPolling();
+      }
+    })
+    .catch(() => {});
 
   uploadFileInput.addEventListener("change", () => {
     const count = uploadFileInput.files ? uploadFileInput.files.length : 0;

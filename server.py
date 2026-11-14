@@ -549,6 +549,463 @@ def compute_audio_info_and_peaks(filepath: Path, num_peaks: int = 180) -> tuple[
     return duration, peaks
 
 
+SPOTDL_VENV_DIR = Path.home() / ".local" / "share" / "arena-dj-soundboard" / "spotdl-venv"
+SPOTDL_LOCK = threading.Lock()
+SPOTDL_PROC: subprocess.Popen | None = None
+SPOTDL_CANCEL_REQUESTED = False
+SPOTDL_JOB: dict = {
+    "running": False,
+    "status": "idle",
+    "query": "",
+    "category_id": "action",
+    "created_category_id": None,
+    "created_category_name": None,
+    "message": "",
+    "completed_count": 0,
+    "total_count": 0,
+    "imported_tracks": [],
+    "errors": [],
+    "log_lines": [],
+    "updated_at": 0.0,
+}
+
+
+def find_spotdl_binary() -> str | None:
+    """Sucht nach einer vorhandenen spotdl-Installation (eigenes Venv, ~/.local/bin oder System-PATH)."""
+    candidates = [
+        SPOTDL_VENV_DIR / "bin" / "spotdl",
+        Path.home() / ".local" / "bin" / "spotdl",
+    ]
+    for c in candidates:
+        if c.is_file() and os.access(c, os.X_OK):
+            return str(c)
+    which_bin = shutil.which("spotdl")
+    if which_bin:
+        return which_bin
+    return None
+
+
+def _append_spotdl_log(line: str, message: str | None = None):
+    clean = line.strip()
+    with SPOTDL_LOCK:
+        if clean:
+            SPOTDL_JOB["log_lines"].append(clean)
+            if len(SPOTDL_JOB["log_lines"]) > 40:
+                SPOTDL_JOB["log_lines"] = SPOTDL_JOB["log_lines"][-40:]
+        if message is not None:
+            SPOTDL_JOB["message"] = message
+        SPOTDL_JOB["updated_at"] = time.time()
+
+
+def ensure_spotdl_binary() -> str:
+    """Stellt sicher, dass spotdl installiert ist; richtet es bei Bedarf automatisch in einem Venv ein."""
+    existing = find_spotdl_binary()
+    if existing:
+        return existing
+
+    _append_spotdl_log(
+        "spotdl wird erstmalig in ~/.local/share/arena-dj-soundboard/spotdl-venv eingerichtet...",
+        "Installiere spotDL (einmalige Einrichtung, dauert ca. 30–60 Sek.)...",
+    )
+    SPOTDL_VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(SPOTDL_VENV_DIR)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    pip_bin = SPOTDL_VENV_DIR / "bin" / "pip"
+    subprocess.run(
+        [str(pip_bin), "install", "--upgrade", "pip", "spotdl"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    spotdl_bin = SPOTDL_VENV_DIR / "bin" / "spotdl"
+    if not spotdl_bin.is_file():
+        raise RuntimeError("spotdl konnte nicht automatisch installiert werden.")
+    return str(spotdl_bin)
+
+
+def extract_mp3_metadata(filepath: Path) -> tuple[str, str]:
+    """Liest Titel und Interpret per ffprobe aus den ID3-Tags oder fällt auf den Dateinamen zurück."""
+    title = ""
+    artist = ""
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format_tags=title,artist",
+                "-of",
+                "json",
+                str(filepath),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        if probe.returncode == 0 and probe.stdout.strip():
+            info = json.loads(probe.stdout)
+            tags = (info.get("format") or {}).get("tags") or {}
+            # Case-insensitive Tag-Suche
+            for k, v in tags.items():
+                kl = k.lower()
+                if kl == "title" and v:
+                    title = str(v).strip()
+                elif kl == "artist" and v:
+                    artist = str(v).strip()
+    except Exception:
+        pass
+
+    if not title:
+        stem = filepath.stem.replace("_", " ").strip()
+        if " - " in stem:
+            parts = stem.split(" - ", 1)
+            artist = artist or parts[0].strip()
+            title = parts[1].strip()
+        else:
+            title = stem
+    return title or "Unbekanntes Lied", artist
+
+
+def ensure_playlist_category(playlist_name: str) -> str:
+    """Legt eine neue Kategorie für die importierte Spotify-Playlist an (oder gibt die vorhandene zurück)."""
+    clean_name = playlist_name.strip()[:48] or "Spotify Playlist"
+    cat_id = re.sub(r"[^a-z0-9]+", "-", clean_name.lower()).strip("-") or f"spotify-{uuid.uuid4().hex[:6]}"
+    conn = get_db()
+    existing = conn.execute("SELECT id FROM categories WHERE id = ? OR lower(name) = lower(?)", (cat_id, clean_name)).fetchone()
+    if existing:
+        real_id = existing["id"]
+        conn.close()
+        return real_id
+    max_order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) FROM categories").fetchone()[0]
+    conn.execute(
+        "INSERT INTO categories (id, name, icon, sort_order) VALUES (?, ?, ?, ?)",
+        (cat_id, clean_name, "🟢", max_order + 1),
+    )
+    conn.commit()
+    conn.close()
+    return cat_id
+
+
+def import_spotdl_mp3_file(mp3_path: Path, category_id: str, base_color: str, idx: int) -> dict | None:
+    """Übernimmt eine fertig heruntergeladene MP3-Datei in das Soundboard inkl. Wellenform-Analyse."""
+    if not mp3_path.is_file() or mp3_path.stat().st_size < 8192:
+        return None
+
+    title, artist = extract_mp3_metadata(mp3_path)
+    safe_stem = re.sub(r"[^a-zA-Z0-9_\-\.äöüÄÖÜß ]", "_", mp3_path.stem).strip() or "spotify_track"
+    unique_filename = f"{int(time.time())}_{uuid.uuid4().hex[:6]}_{safe_stem}.mp3"
+    dest_path = UPLOADS_DIR / unique_filename
+
+    shutil.move(str(mp3_path), str(dest_path))
+    duration, peaks = compute_audio_info_and_peaks(dest_path)
+
+    palette = [
+        "#22c55e",
+        "#f97316",
+        "#38bdf8",
+        "#a855f7",
+        "#eab308",
+        "#ec4899",
+        "#14b8a6",
+        "#ef4444",
+    ]
+    track_color = base_color if idx == 0 and base_color else palette[idx % len(palette)]
+
+    conn = get_db()
+    max_order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) FROM tracks").fetchone()[0]
+    cur = conn.execute(
+        """
+        INSERT INTO tracks (title, artist, filename, category_id, duration, volume, color, peaks_json, sort_order)
+        VALUES (?, ?, ?, ?, ?, 1.0, ?, ?, ?)
+        """,
+        (
+            title,
+            artist,
+            unique_filename,
+            category_id,
+            duration,
+            track_color,
+            json.dumps(peaks),
+            max_order + 1,
+        ),
+    )
+    track_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    if PLAYER_ENGINE:
+        tracks, _ = load_tracks_and_settings()
+        PLAYER_ENGINE.refresh_track_metadata(tracks)
+
+    return {
+        "id": track_id,
+        "title": title,
+        "artist": artist,
+        "duration": duration,
+        "category_id": category_id,
+    }
+
+
+def normalize_spotify_queries(raw_query: str) -> list[str]:
+    """Bereinigt Spotify-Links (z. B. /intl-de/) und unterstützt mehrere Zeilen."""
+    queries: list[str] = []
+    for line in raw_query.splitlines():
+        q = line.strip()
+        if not q:
+            continue
+        q = re.sub(r"https?://open\.spotify\.com/intl-[a-zA-Z0-9_-]+/", "https://open.spotify.com/", q)
+        queries.append(q)
+    return queries
+
+
+def start_spotdl_download_job(raw_query: str, category_id: str, fallback_category_id: str, color: str) -> dict:
+    global SPOTDL_PROC, SPOTDL_CANCEL_REQUESTED
+    queries = normalize_spotify_queries(raw_query)
+    if not queries:
+        return {"ok": False, "error": "Bitte einen Spotify-Link (Playlist / Song / Album) oder Suchbegriff eingeben."}
+
+    with SPOTDL_LOCK:
+        if SPOTDL_JOB["running"]:
+            return {"ok": False, "error": "Es läuft bereits ein Spotify-Download im Hintergrund."}
+
+        target_cat = fallback_category_id if category_id == "__playlist__" else (category_id or "action")
+        SPOTDL_CANCEL_REQUESTED = False
+        SPOTDL_JOB.update(
+            {
+                "running": True,
+                "status": "running",
+                "query": queries[0],
+                "category_id": target_cat,
+                "created_category_id": None,
+                "created_category_name": None,
+                "message": "Verbinde mit Spotify & analysiere Playlist/Song...",
+                "completed_count": 0,
+                "total_count": 0,
+                "imported_tracks": [],
+                "errors": [],
+                "log_lines": [],
+                "updated_at": time.time(),
+            }
+        )
+
+    def _worker():
+        global SPOTDL_PROC, SPOTDL_CANCEL_REQUESTED
+        staging_dir = DATA_DIR / "spotdl_staging" / f"job_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        active_cat = fallback_category_id if category_id == "__playlist__" else (category_id or "action")
+        imported_files: set[str] = set()
+
+        def _scan_and_import_ready_mp3s(only_stem: str | None = None):
+            nonlocal active_cat
+            for mp3_file in sorted(staging_dir.glob("*.mp3")):
+                if mp3_file.name in imported_files:
+                    continue
+                if only_stem and mp3_file.stem.lower() != only_stem.lower():
+                    continue
+                try:
+                    if mp3_file.stat().st_size < 8192:
+                        continue
+                except OSError:
+                    continue
+                imported_files.add(mp3_file.name)
+                with SPOTDL_LOCK:
+                    idx = len(SPOTDL_JOB["imported_tracks"])
+                track_info = import_spotdl_mp3_file(mp3_file, active_cat, color, idx)
+                if track_info:
+                    with SPOTDL_LOCK:
+                        SPOTDL_JOB["imported_tracks"].append(track_info)
+                        SPOTDL_JOB["completed_count"] = len(SPOTDL_JOB["imported_tracks"])
+                        total = SPOTDL_JOB["total_count"]
+                        done = SPOTDL_JOB["completed_count"]
+                        progress_prefix = f"({done}/{total}) " if total > 0 else f"({done}) "
+                        SPOTDL_JOB["message"] = f"{progress_prefix}Importiert: {track_info['artist']} - {track_info['title']}".strip(" -")
+                        SPOTDL_JOB["updated_at"] = time.time()
+
+        try:
+            spotdl_bin = ensure_spotdl_binary()
+            output_tmpl = str(staging_dir / "{artist} - {title}.{output-ext}")
+            cmd = [
+                spotdl_bin,
+                "download",
+                *queries,
+                "--output",
+                output_tmpl,
+                "--format",
+                "mp3",
+                "--threads",
+                "2",
+                "--simple-tui",
+            ]
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+            with SPOTDL_LOCK:
+                SPOTDL_PROC = proc
+
+            assert proc.stdout is not None
+            for raw_line in proc.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+
+                # Playlist-/Album-Erkennung: "Found 15 songs in Warm-Up 2026 (Playlist)"
+                m_found = re.search(r"Found\s+(\d+)\s+songs\s+in\s+(.+?)\s+\((Playlist|Album|Artist)\)", line, re.IGNORECASE)
+                if m_found:
+                    count_val = int(m_found.group(1))
+                    list_name = m_found.group(2).strip()
+                    if category_id == "__playlist__" and list_name:
+                        active_cat = ensure_playlist_category(list_name)
+                        with SPOTDL_LOCK:
+                            SPOTDL_JOB["category_id"] = active_cat
+                            SPOTDL_JOB["created_category_id"] = active_cat
+                            SPOTDL_JOB["created_category_name"] = list_name
+                    with SPOTDL_LOCK:
+                        SPOTDL_JOB["total_count"] += count_val
+                    _append_spotdl_log(line, f"Playlist erkannt: „{list_name}“ ({count_val} Lieder) – starte Download...")
+                    continue
+
+                # Fortschrittszähler: "3/15 complete"
+                m_comp = re.search(r"^(\d+)/(\d+)\s+complete", line, re.IGNORECASE)
+                if m_comp:
+                    total_val = int(m_comp.group(2))
+                    with SPOTDL_LOCK:
+                        if total_val > SPOTDL_JOB["total_count"]:
+                            SPOTDL_JOB["total_count"] = total_val
+                    _append_spotdl_log(line)
+                    _scan_and_import_ready_mp3s()
+                    continue
+
+                # Fertigmeldung eines einzelnen Songs: "<Song>: Done" oder 'Downloaded "<Song>":'
+                m_done = re.match(r"^(.+?):\s+Done$", line)
+                if m_done:
+                    song_stem = m_done.group(1).strip()
+                    _append_spotdl_log(line)
+                    time.sleep(0.15)
+                    _scan_and_import_ready_mp3s(only_stem=song_stem)
+                    _scan_and_import_ready_mp3s()
+                    continue
+
+                m_dl = re.match(r'^Downloaded\s+"(.+?)":', line)
+                if m_dl:
+                    song_stem = m_dl.group(1).strip()
+                    _append_spotdl_log(line)
+                    time.sleep(0.15)
+                    _scan_and_import_ready_mp3s(only_stem=song_stem)
+                    _scan_and_import_ready_mp3s()
+                    continue
+
+                # Aktiver Schritt eines Lieds: "<Song>: Downloading" / "Searching for song" / "Embedding metadata"
+                m_step = re.match(r"^(.+?):\s+(Searching for song|Getting audio meta|Downloading|Embedding metadata|Converting)$", line)
+                if m_step:
+                    song_label = m_step.group(1).strip()
+                    step_en = m_step.group(2)
+                    step_de = {
+                        "Searching for song": "Suche Audio-Stream",
+                        "Getting audio meta": "Lade Metadaten",
+                        "Downloading": "Lade MP3 herunter",
+                        "Converting": "Konvertiere MP3",
+                        "Embedding metadata": "Schreibe ID3-Tags",
+                    }.get(step_en, step_en)
+                    with SPOTDL_LOCK:
+                        done = SPOTDL_JOB["completed_count"]
+                        total = SPOTDL_JOB["total_count"]
+                        prefix = f"[{done}/{total}] " if total > 0 else ""
+                    _append_spotdl_log(line, f"{prefix}{step_de}: {song_label}...")
+                    continue
+
+                if "error" in line.lower() or "exception" in line.lower():
+                    with SPOTDL_LOCK:
+                        SPOTDL_JOB["errors"].append(line)
+
+                _append_spotdl_log(line)
+
+            proc.wait()
+            with SPOTDL_LOCK:
+                SPOTDL_PROC = None
+
+            # Alle noch im Staging-Ordner liegenden fertigen MP3s importieren
+            _scan_and_import_ready_mp3s()
+
+            with SPOTDL_LOCK:
+                done_count = SPOTDL_JOB["completed_count"]
+                if SPOTDL_CANCEL_REQUESTED:
+                    SPOTDL_JOB["running"] = False
+                    SPOTDL_JOB["status"] = "cancelled"
+                    SPOTDL_JOB["message"] = f"Download abgebrochen ({done_count} Lieder wurden bereits ins Soundboard übernommen)."
+                elif done_count > 0:
+                    SPOTDL_JOB["running"] = False
+                    SPOTDL_JOB["status"] = "done"
+                    SPOTDL_JOB["message"] = f"Fertig! {done_count} {'Lied wurde' if done_count == 1 else 'Lieder wurden'} erfolgreich als MP3 importiert."
+                else:
+                    SPOTDL_JOB["running"] = False
+                    SPOTDL_JOB["status"] = "error"
+                    last_err = SPOTDL_JOB["errors"][-1] if SPOTDL_JOB["errors"] else (SPOTDL_JOB["log_lines"][-1] if SPOTDL_JOB["log_lines"] else "Keine Lieder gefunden.")
+                    SPOTDL_JOB["message"] = f"Keine MP3s heruntergeladen ({last_err})"
+                SPOTDL_JOB["updated_at"] = time.time()
+
+        except Exception as e:
+            with SPOTDL_LOCK:
+                SPOTDL_PROC = None
+                SPOTDL_JOB["running"] = False
+                SPOTDL_JOB["status"] = "error"
+                SPOTDL_JOB["message"] = f"Fehler beim Spotify-Download: {e}"
+                SPOTDL_JOB["errors"].append(str(e))
+                SPOTDL_JOB["updated_at"] = time.time()
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"ok": True, "job": get_spotdl_job_status()}
+
+
+def cancel_spotdl_download_job() -> dict:
+    global SPOTDL_PROC, SPOTDL_CANCEL_REQUESTED
+    with SPOTDL_LOCK:
+        SPOTDL_CANCEL_REQUESTED = True
+        proc = SPOTDL_PROC
+    if proc and proc.poll() is None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    return {"ok": True, "job": get_spotdl_job_status()}
+
+
+def get_spotdl_job_status() -> dict:
+    with SPOTDL_LOCK:
+        return {
+            "running": SPOTDL_JOB["running"],
+            "status": SPOTDL_JOB["status"],
+            "query": SPOTDL_JOB["query"],
+            "category_id": SPOTDL_JOB["category_id"],
+            "created_category_id": SPOTDL_JOB["created_category_id"],
+            "created_category_name": SPOTDL_JOB["created_category_name"],
+            "message": SPOTDL_JOB["message"],
+            "completed_count": SPOTDL_JOB["completed_count"],
+            "total_count": SPOTDL_JOB["total_count"],
+            "imported_tracks": list(SPOTDL_JOB["imported_tracks"]),
+            "errors": list(SPOTDL_JOB["errors"][-5:]),
+            "log_lines": list(SPOTDL_JOB["log_lines"][-15:]),
+            "updated_at": SPOTDL_JOB["updated_at"],
+            "spotdl_installed": find_spotdl_binary() is not None,
+        }
+
+
 def generate_demo_audio_files():
     """
     Erzeugt beim allerersten Start 3 Demo-MP3s mit unterschiedlichen Abschnitten,
@@ -994,6 +1451,10 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             if not authed:
                 return self.send_json({"error": "Nicht autorisiert"}, 401)
             return self.send_json(check_github_updates())
+        if path == "/api/spotdl/status":
+            if not authed:
+                return self.send_json({"error": "Nicht autorisiert"}, 401)
+            return self.send_json(get_spotdl_job_status())
         if path.startswith("/media/"):
             if not authed:
                 return self.send_json({"error": "Nicht autorisiert"}, 401)
@@ -1251,6 +1712,12 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/system/update":
             return self.handle_system_update()
+
+        if path == "/api/spotdl/start":
+            return self.handle_spotdl_start()
+
+        if path == "/api/spotdl/cancel":
+            return self.handle_spotdl_cancel()
 
         self.send_error(404, "Endpoint nicht gefunden")
 
@@ -1765,6 +2232,21 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                 os.execv(sys.executable, [sys.executable, target_script, *sys.argv[1:]])
 
             threading.Thread(target=_restart_process, daemon=True).start()
+
+    def handle_spotdl_start(self):
+        data = self.read_json_body()
+        raw_query = str(data.get("query") or "").strip()
+        category_id = str(data.get("category_id") or "__playlist__").strip()
+        fallback_cat = str(data.get("fallback_category_id") or "action").strip()
+        if fallback_cat == "all" or not fallback_cat:
+            fallback_cat = "action"
+        color = str(data.get("color") or "#22c55e").strip()
+        res = start_spotdl_download_job(raw_query, category_id, fallback_cat, color)
+        self.send_json(res, 200 if res.get("ok") else 400)
+
+    def handle_spotdl_cancel(self):
+        res = cancel_spotdl_download_job()
+        self.send_json(res, 200)
 
 
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):

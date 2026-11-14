@@ -98,7 +98,7 @@ Priority: optional
 Architecture: ${ARCH}
 Installed-Size: ${INSTALLED_SIZE}
 Depends: python3 (>= 3.10), python3-numpy, ffmpeg, xdg-utils
-Recommends: pipewire-bin | alsa-utils
+Recommends: pipewire-bin | alsa-utils, python3-venv, python3-pip
 Maintainer: uWiiiDev <https://github.com/uWiiiDev/ArenaDjSoundboard>
 Homepage: https://github.com/uWiiiDev/ArenaDjSoundboard
 Description: Live Competition DJ Soundboard & Dual-Deck Audio Mixer
