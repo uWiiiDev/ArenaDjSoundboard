@@ -78,28 +78,26 @@ const state = {
 };
 
 // ============================================================================
-// DUAL-DECK AUDIO ENGINE (Deck A + Deck B für nahtlosen Crossfade & iPad Gain)
+// DUAL-DECK AUDIO ENGINE (Deck A + Deck B für nahtlosen Crossfade & iPad Audio)
 // ============================================================================
-const SILENT_UNLOCK_WAV =
-  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-
 function createDeck(index) {
   const audio = new Audio();
   audio.preload = "auto";
+  audio.playsInline = true;
+  audio.setAttribute("playsinline", "");
+  audio.setAttribute("webkit-playsinline", "");
   return {
     index,
     audio,
-    gainNode: null,
-    sourceConnected: false,
     trackVolume: 1.0,
     fadeGain: 0.0,
     animId: null,
+    seekHandler: null,
   };
 }
 
 const decks = [createDeck(0), createDeck(1)];
 let activeDeckIdx = 0;
-let decksUnlocked = false;
 
 function getActiveDeck() {
   return decks[activeDeckIdx];
@@ -111,53 +109,19 @@ function getActiveAudio() {
 
 const editorAudio = new Audio();
 editorAudio.preload = "auto";
-
-let audioCtx = null;
-let masterBusGain = null;
+editorAudio.playsInline = true;
+editorAudio.setAttribute("playsinline", "");
+editorAudio.setAttribute("webkit-playsinline", "");
 
 function ensureAudioContext() {
-  if (!audioCtx) {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (AudioContextClass) {
-      audioCtx = new AudioContextClass();
-      masterBusGain = audioCtx.createGain();
-      masterBusGain.connect(audioCtx.destination);
-
-      decks.forEach((deck) => {
-        try {
-          deck.gainNode = audioCtx.createGain();
-          deck.gainNode.gain.value = 0;
-          deck.gainNode.connect(masterBusGain);
-          const src = audioCtx.createMediaElementSource(deck.audio);
-          src.connect(deck.gainNode);
-          deck.sourceConnected = true;
-        } catch (err) {
-          console.warn(`WebAudio Deck ${deck.index} Fallback:`, err);
-        }
-      });
-    }
-  }
-  if (audioCtx && audioCtx.state === "suspended") {
-    audioCtx.resume();
-  }
-
-  // Beim ersten Fingertipp auf iPad/iPhone auch das zweite Deck stumm entsperren,
-  // damit es später beim automatischen Liedwechsel ohne erneuten Touch starten darf!
-  if (!decksUnlocked) {
-    decksUnlocked = true;
-    const inactive = decks[1 - activeDeckIdx];
-    if (!inactive.audio.src) {
-      inactive.fadeGain = 0;
-      inactive.audio.src = SILENT_UNLOCK_WAV;
-      inactive.audio
-        .play()
-        .then(() => {
-          inactive.audio.pause();
-          inactive.audio.removeAttribute("src");
-        })
-        .catch(() => {});
-    }
-  }
+  // Hinweis für iPadOS / iOS Safari:
+  // Wir binden KEIN WebAudio createMediaElementSource(deck.audio) an die <audio>-Elemente,
+  // da WebKit bei Range-gestreamten MP3s (206 Partial Content) über MediaElementAudioSourceNode
+  // häufig komplette Stille ausgibt oder im "interrupted"-State hängenbleibt.
+  // Stattdessen nutzen wir direkt die native Hardware-Audio-Pipeline der HTML5-<audio>-Decks.
+  decks.forEach((deck) => {
+    deck.audio.playsInline = true;
+  });
 }
 
 /**
@@ -168,18 +132,12 @@ function applyEffectiveVolume() {
   const duckFactor = state.duckMultiplier;
   const busGain = Math.max(0, Math.min(1.5, master * duckFactor));
 
-  if (masterBusGain && audioCtx) {
-    masterBusGain.gain.setValueAtTime(busGain, audioCtx.currentTime);
-  }
-
   decks.forEach((deck) => {
     const deckLevel = Math.max(0, Math.min(1.5, deck.trackVolume * deck.fadeGain));
-    if (deck.sourceConnected && deck.gainNode && audioCtx) {
-      deck.gainNode.gain.setValueAtTime(deckLevel, audioCtx.currentTime);
-      deck.audio.volume = 1.0;
-    } else {
-      deck.audio.volume = Math.max(0, Math.min(1.0, busGain * deckLevel));
-    }
+    const targetVol = Math.max(0, Math.min(1.0, busGain * deckLevel));
+    try {
+      deck.audio.volume = targetVol;
+    } catch (_) {}
   });
 
   // UI-Pegelanzeige im vertikalen Fader-Schlitz aktualisieren
@@ -267,11 +225,26 @@ function isServerMode() {
 
 function setOutputMode(mode) {
   const nextMode = mode === "local" ? "local" : "server";
-  if (nextMode === state.outputMode) return;
+  if (nextMode === state.outputMode) {
+    if (nextMode === "local" && getActiveAudio().paused && state.currentTrack) {
+      const resumePos =
+        state.pendingResumeSnapshot &&
+        state.pendingResumeSnapshot.track &&
+        state.pendingResumeSnapshot.track.id === state.currentTrack.id
+          ? Number(state.pendingResumeSnapshot.resumeAt || 0)
+          : Number(state.serverCurrentTime || 0);
+      state.pendingResumeSnapshot = null;
+      triggerTrackCue(state.currentTrack, state.currentCue, {
+        resumeAt: resumePos > 0.2 ? resumePos : undefined,
+      });
+    }
+    return;
+  }
 
   if (nextMode === "local") {
     // Übergabe von Server-Ton -> Gerät-Ton (z.B. iPad):
-    // Aktuelles Lied + Sekunde merken, Server-Ton stoppen und lokal nahtlos an derselben Stelle weiterspielen!
+    // Aktuelles Lied + Sekunde merken, lokal SOFORT synchron im selben Touch-Event starten
+    // und parallel den Server-Ton stoppen!
     const wasServerPlaying = state.isPlaying && Boolean(state.currentTrack);
     const handoffTrack = state.currentTrack;
     const handoffCue = state.currentCue;
@@ -283,15 +256,28 @@ function setOutputMode(mode) {
 
     if (wasServerPlaying && handoffTrack) {
       ensureAudioContext();
-      // Server-Audio sofort stoppen, damit nicht beide gleichzeitig laufen
+      // WICHTIG für iPad / iOS Safari:
+      // Lokales <audio>.play() als allerersten synchronen Schritt in der Touch-Geste aufrufen!
+      triggerTrackCue(handoffTrack, handoffCue, { resumeAt: handoffTime });
+
+      // Gleichzeitig Server-Audio sofort stoppen, damit der Titel nur auf dem iPad weiterläuft
       fetch("/api/player/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "stop" }),
       }).catch(() => {});
-
-      triggerTrackCue(handoffTrack, handoffCue, { resumeAt: handoffTime });
     } else {
+      // Falls auf dem Server bereits ein Titel geladen/pausiert war -> in das lokale Deck vorladen,
+      // damit ein anschließender Tipp auf START auf dem iPad sofort losspielt
+      if (handoffTrack && handoffTrack.url) {
+        const activeDeck = getActiveDeck();
+        if (!activeDeck.audio.src || !activeDeck.audio.src.endsWith(handoffTrack.url)) {
+          activeDeck.audio.src = handoffTrack.url;
+          activeDeck.trackVolume = handoffTrack.volume || 1.0;
+          activeDeck.fadeGain = 1.0;
+          applyEffectiveVolume();
+        }
+      }
       state.isPlaying = !getActiveAudio().paused;
       updatePlayerUI();
       renderSoundboard();
@@ -621,35 +607,69 @@ async function triggerTrackCue(track, cue, options = {}) {
   state.plannedNextTrackId = null;
 
   targetDeck.trackVolume = track.volume || 1.0;
-  targetDeck.fadeGain = fadeInSec > 0.06 ? 0.01 : 1.0;
+  targetDeck.fadeGain = fadeInSec > 0.06 ? 0.05 : 1.0;
   applyEffectiveVolume();
 
-  if (!targetDeck.audio.src || !targetDeck.audio.src.endsWith(track.url)) {
+  if (targetDeck.seekHandler) {
+    targetDeck.audio.removeEventListener("loadedmetadata", targetDeck.seekHandler);
+    targetDeck.audio.removeEventListener("canplay", targetDeck.seekHandler);
+    targetDeck.seekHandler = null;
+  }
+
+  const targetStart = Math.max(0, Number(startTime || 0));
+  const isSameSrc =
+    Boolean(targetDeck.audio.src) &&
+    Boolean(track.url) &&
+    targetDeck.audio.src.endsWith(track.url);
+
+  if (!isSameSrc) {
     targetDeck.audio.src = track.url;
   }
   targetDeck.audio.loop = Boolean(track.loop);
 
-  try {
-    targetDeck.audio.currentTime = startTime;
-  } catch (_) {
-    targetDeck.audio.addEventListener(
-      "loadedmetadata",
-      () => {
-        try {
-          targetDeck.audio.currentTime = startTime;
-        } catch (_) {}
-      },
-      { once: true }
-    );
+  // iPadOS / iOS Safari: Wenn readyState === 0 (frische URL), ignoriert WebKit currentTime-Zuweisungen
+  // OHNE einen Fehler zu werfen. Daher bei readyState < 1 immer auf loadedmetadata / canplay hören!
+  if (targetDeck.audio.readyState >= 1) {
+    try {
+      targetDeck.audio.currentTime = targetStart;
+    } catch (_) {}
+  } else if (targetStart > 0.05) {
+    const applyPendingSeek = () => {
+      if (targetDeck.seekHandler === applyPendingSeek) {
+        targetDeck.audio.removeEventListener("loadedmetadata", applyPendingSeek);
+        targetDeck.audio.removeEventListener("canplay", applyPendingSeek);
+        targetDeck.seekHandler = null;
+      }
+      try {
+        if (Math.abs((targetDeck.audio.currentTime || 0) - targetStart) > 0.25) {
+          targetDeck.audio.currentTime = targetStart;
+        }
+      } catch (_) {}
+    };
+    targetDeck.seekHandler = applyPendingSeek;
+    targetDeck.audio.addEventListener("loadedmetadata", applyPendingSeek, { once: true });
+    targetDeck.audio.addEventListener("canplay", applyPendingSeek, { once: true });
   }
 
   try {
-    await targetDeck.audio.play();
+    const playPromise = targetDeck.audio.play();
+    if (playPromise !== undefined) {
+      await playPromise;
+    }
+    if (
+      targetStart > 0.05 &&
+      targetDeck.audio.readyState >= 1 &&
+      Math.abs((targetDeck.audio.currentTime || 0) - targetStart) > 0.5
+    ) {
+      try {
+        targetDeck.audio.currentTime = targetStart;
+      } catch (_) {}
+    }
     state.isPlaying = true;
     document.getElementById("localResumeBanner").classList.add("hidden");
     saveLocalPlaybackSnapshot();
     if (fadeInSec > 0.06) {
-      animateDeckGain(targetDeck, 0.01, 1.0, fadeInSec, fadeCurveIn, () => {
+      animateDeckGain(targetDeck, 0.05, 1.0, fadeInSec, fadeCurveIn, () => {
         state.isCrossfading = false;
         updatePlayerUI();
       });
@@ -661,8 +681,35 @@ async function triggerTrackCue(track, cue, options = {}) {
     renderSoundboard();
     return true;
   } catch (err) {
+    if (!targetDeck.audio.paused) {
+      state.isPlaying = true;
+      targetDeck.fadeGain = 1.0;
+      applyEffectiveVolume();
+      updatePlayerUI();
+      renderSoundboard();
+      return true;
+    }
     if (!options.silentCatch) {
       console.error("Fehler beim Abspielen:", err);
+      state.isPlaying = false;
+      targetDeck.fadeGain = 1.0;
+      applyEffectiveVolume();
+      state.pendingResumeSnapshot = {
+        track,
+        cue: state.currentCue,
+        resumeAt: targetStart,
+      };
+      const banner = document.getElementById("localResumeBanner");
+      const txt = document.getElementById("localResumeText");
+      if (banner && txt) {
+        txt.textContent = t("resume_dynamic", {
+          title: track.title,
+          time: formatTime(targetStart),
+        });
+        banner.classList.remove("hidden");
+      }
+      updatePlayerUI();
+      renderSoundboard();
     }
     return false;
   }
@@ -754,20 +801,46 @@ function togglePlayPause() {
   }
 
   const activeDeck = getActiveDeck();
+  const hasLoadedCurrentTrack =
+    Boolean(activeDeck.audio.src) &&
+    Boolean(state.currentTrack && state.currentTrack.url) &&
+    activeDeck.audio.src.endsWith(state.currentTrack.url);
+
+  if (!hasLoadedCurrentTrack) {
+    const resumePos =
+      state.pendingResumeSnapshot &&
+      state.pendingResumeSnapshot.track &&
+      state.pendingResumeSnapshot.track.id === state.currentTrack.id
+        ? Number(state.pendingResumeSnapshot.resumeAt || 0)
+        : Number(state.serverCurrentTime || 0);
+    state.pendingResumeSnapshot = null;
+    triggerTrackCue(state.currentTrack, state.currentCue, {
+      resumeAt: resumePos > 0.2 ? resumePos : undefined,
+    });
+    return;
+  }
+
   if (activeDeck.audio.paused) {
     state.manualStopOrFade = false;
     const fadeSec = state.settings.auto_fade_enabled
       ? Number(state.settings.fade_in_duration || 1.2)
       : 0.05;
+    activeDeck.trackVolume = state.currentTrack.volume || 1.0;
     activeDeck.fadeGain = 0.05;
     applyEffectiveVolume();
-    activeDeck.audio.play().then(() => {
-      state.isPlaying = true;
-      saveLocalPlaybackSnapshot();
-      animateDeckGain(activeDeck, 0.05, 1.0, fadeSec, "linear");
-      updatePlayerUI();
-      renderSoundboard();
-    });
+    activeDeck.audio
+      .play()
+      .then(() => {
+        state.isPlaying = true;
+        document.getElementById("localResumeBanner").classList.add("hidden");
+        saveLocalPlaybackSnapshot();
+        animateDeckGain(activeDeck, 0.05, 1.0, fadeSec, "linear");
+        updatePlayerUI();
+        renderSoundboard();
+      })
+      .catch(() => {
+        triggerTrackCue(state.currentTrack, state.currentCue);
+      });
   } else {
     state.manualStopOrFade = true;
     clearLocalPlaybackSnapshot();
