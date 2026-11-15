@@ -3437,6 +3437,60 @@ body[data-theme="studio"] .btn-prelisten-toggle.active {
   color: #ffffff;
 }
 
+/* ==========================================================================
+   🥁 BPM-ANZEIGE & TEMPO-FILTER (#6) + 💾 1-KLICK WETTKAMPF-BACKUP (.ZIP, #7)
+   ========================================================================== */
+.panel-sort-select {
+  height: 30px;
+  padding: 0 22px 0 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background-color: rgba(15, 23, 42, 0.78);
+  color: var(--text-main);
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  max-width: 138px;
+}
+
+.panel-sort-select:hover,
+.panel-sort-select:focus {
+  border-color: var(--accent-blue);
+  outline: none;
+}
+
+.track-bpm-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  background: rgba(56, 189, 248, 0.14);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.track-bpm-badge.bpm-fast {
+  background: rgba(249, 115, 22, 0.16);
+  color: #fdba74;
+  border-color: rgba(249, 115, 22, 0.36);
+}
+
+.track-bpm-badge.bpm-calm {
+  background: rgba(52, 211, 153, 0.14);
+  color: #6ee7b7;
+  border-color: rgba(52, 211, 153, 0.32);
+}
+
+.backup-zip-box {
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+
 
 
 

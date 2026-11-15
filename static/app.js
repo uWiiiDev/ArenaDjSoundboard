@@ -95,6 +95,9 @@ const state = {
   sfxBarVisible: localStorage.getItem("arena_dj_sfx_bar") !== "0",
   sfxDuckEnabled: localStorage.getItem("arena_dj_sfx_duck") !== "0",
   activeSfxId: null,
+
+  // 🥁 Tempo-Filter & Sortierung (#6)
+  sortOrder: "custom",
 };
 
 // ============================================================================
@@ -1901,7 +1904,7 @@ function renderCategories() {
 
 function getFilteredTracks() {
   const q = state.searchQuery.trim().toLowerCase();
-  return state.tracks.filter((track) => {
+  const filtered = state.tracks.filter((track) => {
     if (state.activeCategory !== "all" && track.category_id !== state.activeCategory) {
       return false;
     }
@@ -1909,8 +1912,29 @@ function getFilteredTracks() {
     const inTitle = track.title.toLowerCase().includes(q);
     const inArtist = (track.artist || "").toLowerCase().includes(q);
     const inCues = (track.cues || []).some((c) => c.label.toLowerCase().includes(q));
-    return inTitle || inArtist || inCues;
+    const inBpm = track.bpm > 0 && (`${track.bpm}`.includes(q) || `${track.bpm} bpm`.includes(q));
+    return inTitle || inArtist || inCues || inBpm;
   });
+
+  if (state.sortOrder === "bpm_desc") {
+    return [...filtered].sort((a, b) => (Number(b.bpm || 0) || -1) - (Number(a.bpm || 0) || -1));
+  }
+  if (state.sortOrder === "bpm_asc") {
+    return [...filtered].sort(
+      (a, b) => (Number(a.bpm || 0) || 999) - (Number(b.bpm || 0) || 999)
+    );
+  }
+  if (state.sortOrder === "title_asc") {
+    return [...filtered].sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+  }
+  return filtered;
+}
+
+function renderBpmBadge(bpmVal) {
+  const bpm = Number(bpmVal || 0);
+  if (!bpm || bpm <= 0) return "";
+  const cls = bpm >= 126 ? "bpm-fast" : bpm < 105 ? "bpm-calm" : "bpm-mid";
+  return `<span class="track-bpm-badge ${cls}" title="Tempo: ${bpm} BPM">${bpm} BPM</span>`;
 }
 
 const LOOP_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>`;
@@ -1982,7 +2006,7 @@ function renderSoundboard() {
   const isListMode = state.settings.view_mode === "list";
   const isStudio = getTheme() === "studio";
   const isBulk = Boolean(state.bulkSelectMode);
-  const canDragTracks = !state.searchQuery.trim() && !isBulk;
+  const canDragTracks = !state.searchQuery.trim() && !isBulk && state.sortOrder === "custom";
 
   grid.classList.toggle("list-mode", isListMode);
   updateBulkBarUI();
@@ -2060,7 +2084,7 @@ function renderSoundboard() {
               </button>
               <div class="list-title-block">
                 <div class="list-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</div>
-                <div class="list-sub">${escapeHtml(track.artist || t("default_artist"))} • ${formatTime(track.duration)}</div>
+                <div class="list-sub">${escapeHtml(track.artist || t("default_artist"))} • ${formatTime(track.duration)}${renderBpmBadge(track.bpm)}</div>
               </div>
             </div>
 
@@ -2167,7 +2191,7 @@ function renderSoundboard() {
                 <div class="track-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</div>
                 <div class="track-meta-sub">
                   <span>${escapeHtml(track.artist || t("default_artist"))}</span>
-                  <span>• ${formatTime(track.duration)}</span>
+                  <span>• ${formatTime(track.duration)}${renderBpmBadge(track.bpm)}</span>
                 </div>
               </div>
               <div class="card-actions-right">
@@ -2542,6 +2566,10 @@ function openCueEditor(trackId) {
   document.getElementById("editTrackName").value = track.title;
   document.getElementById("editTrackArtist").value = track.artist || "";
   document.getElementById("editTrackVolume").value = Math.round((track.volume || 1.0) * 100);
+  const bpmEl = document.getElementById("editTrackBpm");
+  if (bpmEl) {
+    bpmEl.value = track.bpm || 0;
+  }
   document.getElementById("editTrackLoop").value = track.loop ? "1" : "0";
 
   const catSelect = document.getElementById("editTrackCategory");
@@ -3222,12 +3250,16 @@ document.addEventListener("DOMContentLoaded", () => {
       0.1,
       Math.min(1.5, Number(document.getElementById("editTrackVolume").value) / 100)
     );
+    const bpm = Math.max(
+      0,
+      Math.min(260, Math.round(Number(document.getElementById("editTrackBpm")?.value || 0)))
+    );
     const loop = document.getElementById("editTrackLoop").value === "1";
 
     await fetch(`/api/tracks/${state.editingTrackId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, artist, category_id, volume, loop }),
+      body: JSON.stringify({ title, artist, category_id, volume, bpm, loop }),
     });
 
     await loadStateFromServer();
@@ -3248,6 +3280,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "editTrackCategory",
     "editTrackLoop",
     "editTrackVolume",
+    "editTrackBpm",
     "editTrackName",
     "editTrackArtist",
   ].forEach((fieldId) => {
@@ -3414,6 +3447,37 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+
+  // 🥁 Automatische BPM-Erkennung für das aktuelle Lied im Editor
+  const autoBpmTrackBtn = document.getElementById("autoBpmTrackBtn");
+  if (autoBpmTrackBtn) {
+    autoBpmTrackBtn.addEventListener("click", async () => {
+      if (!state.editingTrackId) return;
+      autoBpmTrackBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/tracks/${state.editingTrackId}/auto-bpm`, {
+          method: "POST",
+        });
+        const data = await res.json();
+        if (res.ok && data.bpm > 0) {
+          const bpmInput = document.getElementById("editTrackBpm");
+          if (bpmInput) {
+            bpmInput.value = data.bpm;
+          }
+          await loadStateFromServer();
+        }
+      } catch (_) {
+      } finally {
+        autoBpmTrackBtn.disabled = false;
+      }
+    });
+  }
+
+  // 🥁 Sortierung / Tempo-Filter (BPM) im Lieder-Panel
+  document.getElementById("trackSortSelect")?.addEventListener("change", (e) => {
+    state.sortOrder = e.target.value || "custom";
+    renderSoundboard();
+  });
 
   // 🎧 Vorhör-Leiste (Pre-Listen Bar) Buttons (-10s, +15s, Stop)
   document.getElementById("prelistenBackBtn")?.addEventListener("click", () => {
@@ -4202,7 +4266,91 @@ document.addEventListener("DOMContentLoaded", () => {
   const checkUpdateBtn = document.getElementById("checkUpdateBtn");
   const normalizeAllTracksBtn = document.getElementById("normalizeAllTracksBtn");
   const trimAllTracksSilenceBtn = document.getElementById("trimAllTracksSilenceBtn");
+  const detectAllBpmBtn = document.getElementById("detectAllBpmBtn");
   const normalizeAllStatusMsg = document.getElementById("normalizeAllStatusMsg");
+  const restoreFullZipBtn = document.getElementById("restoreFullZipBtn");
+  const restoreFullZipInput = document.getElementById("restoreFullZipInput");
+  const backupZipStatusMsg = document.getElementById("backupZipStatusMsg");
+
+  if (detectAllBpmBtn) {
+    detectAllBpmBtn.addEventListener("click", async () => {
+      detectAllBpmBtn.disabled = true;
+      const origText = detectAllBpmBtn.textContent;
+      detectAllBpmBtn.textContent = t("detect_all_bpm_busy");
+      if (normalizeAllStatusMsg) {
+        normalizeAllStatusMsg.textContent = t("detect_all_bpm_busy");
+        normalizeAllStatusMsg.classList.remove("hidden");
+      }
+      try {
+        const res = await fetch("/api/tracks/detect-bpm-all", { method: "POST" });
+        const data = await res.json();
+        await loadStateFromServer();
+        if (res.ok && normalizeAllStatusMsg) {
+          normalizeAllStatusMsg.textContent = t("detect_all_bpm_done", {
+            count: data.detected_count || 0,
+          });
+        }
+      } catch (_) {
+        if (normalizeAllStatusMsg) {
+          normalizeAllStatusMsg.classList.add("hidden");
+        }
+      } finally {
+        detectAllBpmBtn.disabled = false;
+        detectAllBpmBtn.textContent = origText;
+      }
+    });
+  }
+
+  if (restoreFullZipBtn && restoreFullZipInput) {
+    restoreFullZipBtn.addEventListener("click", () => {
+      restoreFullZipInput.value = "";
+      restoreFullZipInput.click();
+    });
+
+    restoreFullZipInput.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      restoreFullZipBtn.disabled = true;
+      const origText = restoreFullZipBtn.textContent;
+      restoreFullZipBtn.textContent = t("restore_zip_busy");
+      if (backupZipStatusMsg) {
+        backupZipStatusMsg.textContent = t("restore_zip_busy");
+        backupZipStatusMsg.style.color = "#38bdf8";
+        backupZipStatusMsg.classList.remove("hidden");
+      }
+      try {
+        const res = await fetch("/api/backup/restore-zip", {
+          method: "POST",
+          headers: { "Content-Type": "application/zip" },
+          body: file,
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          await loadStateFromServer();
+          if (backupZipStatusMsg) {
+            backupZipStatusMsg.style.color = "#34d399";
+            backupZipStatusMsg.textContent = t("restore_zip_done", {
+              tracks: data.restored_tracks || 0,
+              cues: data.restored_cues || 0,
+            });
+          }
+        } else if (backupZipStatusMsg) {
+          backupZipStatusMsg.style.color = "#fca5a5";
+          backupZipStatusMsg.textContent = t("restore_zip_err", {
+            err: data.error || res.statusText,
+          });
+        }
+      } catch (err) {
+        if (backupZipStatusMsg) {
+          backupZipStatusMsg.style.color = "#fca5a5";
+          backupZipStatusMsg.textContent = t("restore_zip_err", { err: err.message });
+        }
+      } finally {
+        restoreFullZipBtn.disabled = false;
+        restoreFullZipBtn.textContent = origText;
+      }
+    });
+  }
 
   if (normalizeAllTracksBtn) {
     normalizeAllTracksBtn.addEventListener("click", async () => {

@@ -30,6 +30,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+import zipfile
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -615,6 +616,92 @@ def compute_auto_gain_volume(filepath: Path) -> float:
         return 1.0
 
 
+def compute_audio_bpm(filepath: Path) -> int:
+    """
+    Erkennt automatisch das Tempo (BPM – Beats per Minute, 72..175 BPM) einer Audiodatei
+    über Onset-Hüllkurven-Autokorrelation (100 Hz Raster mit Oktav-Plausibilitätsgewichtung).
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-t",
+                "75",
+                "-i",
+                str(filepath),
+                "-ac",
+                "1",
+                "-ar",
+                "4000",
+                "-f",
+                "s16le",
+                "-",
+            ],
+            capture_output=True,
+            timeout=20,
+        )
+        raw = proc.stdout
+        total_samples = len(raw) // 2
+        if total_samples < 12000:  # mind. 3 Sekunden
+            return 0
+
+        import numpy as np
+
+        arr = np.frombuffer(raw[: total_samples * 2], dtype=np.int16).astype(np.float32) / 32768.0
+        # 10 ms Fenster (40 Samples bei 4000 Hz -> 100 Hz Onset-Abtastrate)
+        hop = 40
+        n_frames = total_samples // hop
+        if n_frames < 250:
+            return 0
+
+        frames = arr[: n_frames * hop].reshape((n_frames, hop))
+        energy = np.sqrt(np.mean(frames * frames, axis=1))
+        # Erste Ableitung (positive Transienten / Kick- & Snare-Onsets)
+        onset = np.maximum(0.0, np.diff(energy, prepend=energy[0]))
+        if float(np.max(onset)) < 1e-4:
+            return 0
+
+        # Leichte Glättung & Mittelwertbefreiung
+        kernel = np.array([0.25, 0.5, 0.25], dtype=np.float32)
+        onset = np.convolve(onset, kernel, mode="same")
+        onset -= float(np.mean(onset))
+
+        # Schnelle Autokorrelation per FFT
+        n_fft = 1 << int(math.ceil(math.log2(2 * len(onset))))
+        spec = np.fft.rfft(onset, n=n_fft)
+        acf = np.fft.irfft(spec * np.conj(spec), n=n_fft)[: len(onset)]
+        if acf[0] <= 0:
+            return 0
+        acf = acf / acf[0]
+
+        fps = 100.0  # 100 Frames pro Sekunde
+        best_bpm = 120
+        best_score = -1e9
+        for bpm_cand in range(72, 176):
+            lag = fps * 60.0 / float(bpm_cand)
+            idx = int(round(lag))
+            if idx <= 2 or idx >= len(acf) - 2:
+                continue
+            # Lokales Maximum um idx (+/- 1 Frame) + harmonische Vielfache (2x, 4x)
+            val1 = float(np.max(acf[idx - 1 : idx + 2]))
+            val2 = float(acf[2 * idx]) if (2 * idx) < len(acf) else 0.0
+            val_half = float(acf[idx // 2]) if (idx // 2) > 2 else 0.0
+            comb = val1 + 0.45 * val2 + 0.20 * val_half
+            # Sanfte Präferenz für typische Sport-/Arena-Tempi (105..140 BPM) gegen Halftime-Fehler
+            prior = math.exp(-0.5 * ((bpm_cand - 124.0) / 34.0) ** 2)
+            score = comb * (0.65 + 0.35 * prior)
+            if score > best_score:
+                best_score = score
+                best_bpm = bpm_cand
+
+        return int(best_bpm)
+    except Exception as e:
+        print(f"Hinweis bei BPM-Analyse: {e}")
+        return 0
+
+
 def detect_track_auto_cues(filepath: Path, duration: float) -> list[dict]:
     """
     Analysiert die Energie-Hüllkurve des Liedes in 0.2s-Schritten und findet automatisch
@@ -1085,6 +1172,7 @@ def import_spotdl_mp3_file(
     trim_track_silence_file(dest_path)
     duration, peaks = compute_audio_info_and_peaks(dest_path)
     auto_vol = compute_auto_gain_volume(dest_path)
+    auto_bpm = compute_audio_bpm(dest_path)
 
     palette = [
         "#22c55e",
@@ -1102,8 +1190,8 @@ def import_spotdl_mp3_file(
     max_order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) FROM tracks").fetchone()[0]
     cur = conn.execute(
         """
-        INSERT INTO tracks (title, artist, filename, category_id, duration, volume, color, peaks_json, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO tracks (title, artist, filename, category_id, duration, volume, bpm, color, peaks_json, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             title,
@@ -1112,6 +1200,7 @@ def import_spotdl_mp3_file(
             category_id,
             duration,
             auto_vol,
+            auto_bpm,
             track_color,
             json.dumps(peaks),
             max_order + 1,
@@ -1509,6 +1598,7 @@ def init_db():
             category_id TEXT NOT NULL DEFAULT 'action',
             duration REAL NOT NULL DEFAULT 0,
             volume REAL NOT NULL DEFAULT 1.0,
+            bpm INTEGER NOT NULL DEFAULT 0,
             color TEXT NOT NULL DEFAULT '#f97316',
             loop INTEGER NOT NULL DEFAULT 0,
             peaks_json TEXT NOT NULL DEFAULT '[]',
@@ -1533,6 +1623,11 @@ def init_db():
         );
         """
     )
+
+    # Datenbank-Migration für bestehende Installationen: Spalte bpm ergänzen, falls noch nicht vorhanden
+    track_cols = {r["name"] for r in conn.execute("PRAGMA table_info(tracks)").fetchall()}
+    if "bpm" not in track_cols:
+        conn.execute("ALTER TABLE tracks ADD COLUMN bpm INTEGER NOT NULL DEFAULT 0")
 
     # Standard-Kategorien anlegen, falls noch leer
     cat_count = conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
@@ -1803,6 +1898,10 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             if not authed:
                 return self.send_json({"error": "Nicht autorisiert"}, 401)
             return self.handle_export()
+        if path == "/api/backup/full.zip":
+            if not authed:
+                return self.send_json({"error": "Nicht autorisiert"}, 401)
+            return self.handle_export_zip()
         if path == "/api/system/update-check":
             if not authed:
                 return self.send_json({"error": "Nicht autorisiert"}, 401)
@@ -2038,6 +2137,68 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def handle_export_zip(self):
+        """
+        Erstellt ein komplettes 1-Klick-Wettkampf-Backup (.zip) inklusive aller MP3-Dateien,
+        Kategorien, Lautstärken, BPM-Werte, Highlights (Cue-Points) und Einstellungen.
+        """
+        conn = get_db()
+        categories = [dict(r) for r in conn.execute("SELECT * FROM categories").fetchall()]
+        tracks = [dict(r) for r in conn.execute("SELECT * FROM tracks").fetchall()]
+        cues = [dict(r) for r in conn.execute("SELECT * FROM cues").fetchall()]
+        settings = {
+            r["key"]: r["value"]
+            for r in conn.execute("SELECT key, value FROM settings").fetchall()
+            if r["key"] not in INTERNAL_SECRET_KEYS and r["key"] not in ("access_token", "auth_initial_pin_hint")
+        }
+        conn.close()
+
+        manifest = {
+            "version": 2,
+            "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "categories": categories,
+            "tracks": tracks,
+            "cues": cues,
+            "settings": settings,
+        }
+
+        tmp_zip = DATA_DIR / f".backup_{uuid.uuid4().hex[:8]}.zip"
+        try:
+            with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_STORED) as zf:
+                zf.writestr(
+                    "manifest.json",
+                    json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
+                )
+                added_files: set[str] = set()
+                for t in tracks:
+                    safe_name = os.path.basename(str(t.get("filename") or ""))
+                    if not safe_name or safe_name in added_files:
+                        continue
+                    fp = UPLOADS_DIR / safe_name
+                    if fp.is_file():
+                        zf.write(fp, arcname=f"uploads/{safe_name}")
+                        added_files.add(safe_name)
+
+            zip_size = tmp_zip.stat().st_size
+            date_tag = time.strftime("%Y-%m-%d")
+            dl_name = f"arena-dj-wettkampf-backup-{date_tag}.zip"
+
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{dl_name}"')
+            self.send_header("Content-Length", str(zip_size))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command != "HEAD":
+                with open(tmp_zip, "rb") as f:
+                    try:
+                        shutil.copyfileobj(f, self.wfile)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+        finally:
+            if tmp_zip.exists():
+                tmp_zip.unlink(missing_ok=True)
+
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -2074,9 +2235,19 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/tracks/trim-silence-all":
             return self.handle_trim_silence_all_tracks()
 
+        if path == "/api/tracks/detect-bpm-all":
+            return self.handle_detect_all_bpm()
+
+        if path == "/api/backup/restore-zip":
+            return self.handle_import_zip()
+
         m_autogain = re.match(r"^/api/tracks/(\d+)/auto-gain$", path)
         if m_autogain:
             return self.handle_auto_gain_track(int(m_autogain.group(1)))
+
+        m_autobpm = re.match(r"^/api/tracks/(\d+)/auto-bpm$", path)
+        if m_autobpm:
+            return self.handle_auto_bpm_track(int(m_autobpm.group(1)))
 
         m_trimsilence = re.match(r"^/api/tracks/(\d+)/trim-silence$", path)
         if m_trimsilence:
@@ -2214,12 +2385,13 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
 
             duration, peaks = compute_audio_info_and_peaks(dest_path)
             auto_vol = compute_auto_gain_volume(dest_path)
+            auto_bpm = compute_audio_bpm(dest_path)
             track_color = color if len(uploaded_files) == 1 else palette[idx % len(palette)]
 
             cur = conn.execute(
                 """
-                INSERT INTO tracks (title, artist, filename, category_id, duration, volume, color, peaks_json, sort_order)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tracks (title, artist, filename, category_id, duration, volume, bpm, color, peaks_json, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     title,
@@ -2228,6 +2400,7 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                     category_id,
                     duration,
                     auto_vol,
+                    auto_bpm,
                     track_color,
                     json.dumps(peaks),
                     max_order + 1 + idx,
@@ -2273,6 +2446,7 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         artist = data.get("artist", existing["artist"])
         category_id = data.get("category_id", existing["category_id"])
         volume = float(data.get("volume", existing["volume"]))
+        bpm = max(0, min(260, int(data.get("bpm", existing["bpm"] or 0))))
         color = data.get("color", existing["color"])
         loop = 1 if data.get("loop", bool(existing["loop"])) else 0
         duration = float(data.get("duration", existing["duration"]))
@@ -2285,10 +2459,10 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         conn.execute(
             """
             UPDATE tracks
-            SET title = ?, artist = ?, category_id = ?, volume = ?, color = ?, loop = ?, duration = ?, peaks_json = ?
+            SET title = ?, artist = ?, category_id = ?, volume = ?, bpm = ?, color = ?, loop = ?, duration = ?, peaks_json = ?
             WHERE id = ?
             """,
-            (title, artist, category_id, volume, color, loop, duration, peaks_json, track_id),
+            (title, artist, category_id, volume, bpm, color, loop, duration, peaks_json, track_id),
         )
         conn.commit()
         conn.close()
@@ -2416,6 +2590,207 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             PLAYER_ENGINE.refresh_track_metadata(tracks)
 
         self.send_json({"ok": True, "normalized_count": normalized_count})
+
+    def handle_auto_bpm_track(self, track_id: int):
+        conn = get_db()
+        row = conn.execute("SELECT id, filename FROM tracks WHERE id = ?", (track_id,)).fetchone()
+        if not row:
+            conn.close()
+            return self.send_json({"error": "Lied nicht gefunden"}, 404)
+
+        filepath = UPLOADS_DIR / os.path.basename(row["filename"])
+        if not filepath.is_file():
+            conn.close()
+            return self.send_json({"error": "Audio-Datei nicht gefunden"}, 404)
+
+        auto_bpm = compute_audio_bpm(filepath)
+        conn.execute("UPDATE tracks SET bpm = ? WHERE id = ?", (auto_bpm, track_id))
+        conn.commit()
+        conn.close()
+
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+
+        self.send_json({"ok": True, "track_id": track_id, "bpm": auto_bpm})
+
+    def handle_detect_all_bpm(self):
+        conn = get_db()
+        rows = conn.execute("SELECT id, filename FROM tracks").fetchall()
+        detected_count = 0
+        for r in rows:
+            filepath = UPLOADS_DIR / os.path.basename(r["filename"])
+            if filepath.is_file():
+                bpm_val = compute_audio_bpm(filepath)
+                if bpm_val > 0:
+                    conn.execute("UPDATE tracks SET bpm = ? WHERE id = ?", (bpm_val, r["id"]))
+                    detected_count += 1
+        conn.commit()
+        conn.close()
+
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+
+        self.send_json({"ok": True, "detected_count": detected_count})
+
+    def handle_import_zip(self):
+        """
+        Stellt ein komplettes Wettkampf-Backup (.zip inkl. MP3s, Kategorien, Lautstärken,
+        BPM-Werte, Highlights und Einstellungen) wieder her.
+        """
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if content_length <= 0:
+            return self.send_json({"error": "Leere Backup-Datei"}, 400)
+
+        raw_body = self.rfile.read(content_length)
+        ctype = self.headers.get("Content-Type", "")
+        zip_bytes = raw_body
+
+        if "multipart/form-data" in ctype:
+            header_bytes = f"Content-Type: {ctype}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
+            msg = BytesParser(policy=default_email_policy).parsebytes(header_bytes + raw_body)
+            for part in msg.iter_parts():
+                if part.get_filename():
+                    zip_bytes = part.get_payload(decode=True) or b""
+                    break
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+                if "manifest.json" not in zf.namelist():
+                    return self.send_json(
+                        {"error": "Ungültiges Backup-Archiv (manifest.json fehlt)."}, 400
+                    )
+                manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+
+                # 1. Audio-Dateien nach data/uploads/ entpacken
+                UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+                for member in zf.namelist():
+                    if member.startswith("uploads/") and not member.endswith("/"):
+                        safe_name = os.path.basename(member)
+                        if safe_name:
+                            dest_fp = UPLOADS_DIR / safe_name
+                            with zf.open(member) as src_f, open(dest_fp, "wb") as out_f:
+                                shutil.copyfileobj(src_f, out_f)
+        except Exception as e:
+            return self.send_json({"error": f"Backup-ZIP konnte nicht gelesen werden: {e}"}, 400)
+
+        conn = get_db()
+        forbidden = INTERNAL_SECRET_KEYS | {"access_token", "auth_initial_pin_hint"}
+
+        # 2. Einstellungen übernehmen
+        for k, v in (manifest.get("settings") or {}).items():
+            if str(k) in forbidden:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (str(k), str(v)),
+            )
+
+        # 3. Kategorien wiederherstellen
+        categories = manifest.get("categories") or []
+        for cat in categories:
+            cid = str(cat.get("id") or "").strip()
+            if not cid:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO categories (id, name, icon, sort_order) VALUES (?, ?, ?, ?)",
+                (
+                    cid,
+                    str(cat.get("name") or cid),
+                    str(cat.get("icon") or "🎵"),
+                    int(cat.get("sort_order") or 0),
+                ),
+            )
+
+        # 4. Lieder & zugehörige Highlights (Cue-Points) wiederherstellen
+        cues_by_old_track: dict[int, list[dict]] = {}
+        for c in manifest.get("cues") or []:
+            old_tid = int(c.get("track_id") or 0)
+            cues_by_old_track.setdefault(old_tid, []).append(c)
+
+        restored_tracks = 0
+        restored_cues = 0
+        for t in manifest.get("tracks") or []:
+            safe_fn = os.path.basename(str(t.get("filename") or ""))
+            if not safe_fn:
+                continue
+            old_tid = int(t.get("id") or 0)
+            existing = conn.execute(
+                "SELECT id FROM tracks WHERE filename = ?", (safe_fn,)
+            ).fetchone()
+
+            title = str(t.get("title") or "Track")
+            artist = str(t.get("artist") or "")
+            cat_id = str(t.get("category_id") or "action")
+            dur = float(t.get("duration") or 0.0)
+            vol = float(t.get("volume") or 1.0)
+            bpm = int(t.get("bpm") or 0)
+            color = str(t.get("color") or "#f97316")
+            loop = 1 if t.get("loop") else 0
+            peaks_json = (
+                t.get("peaks_json")
+                if isinstance(t.get("peaks_json"), str)
+                else json.dumps(t.get("peaks") or [])
+            )
+            sort_order = int(t.get("sort_order") or 0)
+
+            if existing:
+                new_tid = int(existing["id"])
+                conn.execute(
+                    """
+                    UPDATE tracks
+                    SET title = ?, artist = ?, category_id = ?, duration = ?, volume = ?, bpm = ?, color = ?, loop = ?, peaks_json = ?, sort_order = ?
+                    WHERE id = ?
+                    """,
+                    (title, artist, cat_id, dur, vol, bpm, color, loop, peaks_json, sort_order, new_tid),
+                )
+                conn.execute("DELETE FROM cues WHERE track_id = ?", (new_tid,))
+            else:
+                cur = conn.execute(
+                    """
+                    INSERT INTO tracks (title, artist, filename, category_id, duration, volume, bpm, color, loop, peaks_json, sort_order)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (title, artist, safe_fn, cat_id, dur, vol, bpm, color, loop, peaks_json, sort_order),
+                )
+                new_tid = int(cur.lastrowid)
+
+            restored_tracks += 1
+            for c_idx, c in enumerate(cues_by_old_track.get(old_tid, [])):
+                conn.execute(
+                    """
+                    INSERT INTO cues (track_id, label, start_time, end_time, color, fade_in, sort_order)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        new_tid,
+                        str(c.get("label") or f"{c_idx + 1}"),
+                        float(c.get("start_time") or 0.0),
+                        float(c["end_time"]) if c.get("end_time") is not None else None,
+                        str(c.get("color") or color),
+                        1 if c.get("fade_in", True) else 0,
+                        int(c.get("sort_order") or c_idx),
+                    ),
+                )
+                restored_cues += 1
+
+        conn.commit()
+        conn.close()
+
+        if PLAYER_ENGINE:
+            tracks, settings = load_tracks_and_settings()
+            PLAYER_ENGINE.sync_settings(settings)
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+
+        self.send_json(
+            {
+                "ok": True,
+                "restored_tracks": restored_tracks,
+                "restored_cues": restored_cues,
+                "restored_categories": len(categories),
+            }
+        )
 
     def _apply_trim_silence_to_track_row(self, conn, track_id: int, filename: str) -> tuple[bool, float, float]:
         filepath = UPLOADS_DIR / os.path.basename(filename)

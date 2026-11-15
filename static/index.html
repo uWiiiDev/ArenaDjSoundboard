@@ -12,7 +12,7 @@
   <link rel="alternate icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="stylesheet" href="/styles.css?v=20261115c" />
+  <link rel="stylesheet" href="/styles.css?v=20261115d" />
 </head>
 <body>
   <!-- RESUME BANNER FÜR LOKALEN GERÄTE-TON NACH ERZWUNGENEM SEITEN-RELOAD (iOS SAFARI) -->
@@ -170,6 +170,19 @@
             title="Kategorie filtern"
           >
             <option value="all">🏆 Alle Lieder</option>
+          </select>
+
+          <select
+            id="trackSortSelect"
+            class="panel-sort-select"
+            data-i18n-title="sort_select_title"
+            title="Sortierung / Tempo-Filter (BPM)"
+            aria-label="Sortierung wählen"
+          >
+            <option value="custom" data-i18n="sort_custom">↕️ Reihenfolge</option>
+            <option value="bpm_desc" data-i18n="sort_bpm_desc">🔥 BPM: Schnell ↓</option>
+            <option value="bpm_asc" data-i18n="sort_bpm_asc">🌊 BPM: Ruhig ↑</option>
+            <option value="title_asc" data-i18n="sort_title_asc">🔤 Titel A–Z</option>
           </select>
 
           <div class="view-switcher panel-view-switcher" role="group" data-i18n-aria="view_group_aria" aria-label="Ansicht wählen">
@@ -707,6 +720,22 @@
             </div>
           </div>
           <div class="form-group form-group-small">
+            <label data-i18n="meta_bpm_label">Tempo (BPM)</label>
+            <div class="vol-input-with-auto">
+              <input type="number" id="editTrackBpm" min="0" max="240" step="1" value="0" placeholder="–" />
+              <button
+                type="button"
+                class="btn btn-secondary btn-auto-gain-inline"
+                id="autoBpmTrackBtn"
+                data-i18n="auto_bpm_inline_btn"
+                data-i18n-title="auto_bpm_inline_title"
+                title="Tempo (BPM) für dieses Lied automatisch analysieren"
+              >
+                🥁 Auto
+              </button>
+            </div>
+          </div>
+          <div class="form-group form-group-small">
             <label data-i18n="meta_loop_label">Endlos-Loop</label>
             <select id="editTrackLoop">
               <option value="0" data-i18n="meta_loop_no">Nein</option>
@@ -1017,6 +1046,9 @@
             <button type="button" class="btn btn-secondary" id="trimAllTracksSilenceBtn" data-i18n="trim_all_btn">
               ✂️ Stille am Anfang/Ende bei allen Liedern entfernen
             </button>
+            <button type="button" class="btn btn-secondary" id="detectAllBpmBtn" data-i18n="detect_all_bpm_btn">
+              🥁 BPM-Tempo für alle Lieder jetzt erkennen
+            </button>
             <span class="autogain-status-msg hidden" id="normalizeAllStatusMsg"></span>
           </div>
         </div>
@@ -1055,9 +1087,28 @@
           </div>
         </div>
 
-        <!-- BACKUP EXPORT -->
-        <div class="backup-row">
-          <a href="/api/export" download="arena_dj_backup.json" class="btn btn-secondary" data-i18n="backup_btn">📦 Einstellungen & Highlights als Backup herunterladen</a>
+        <!-- 1-KLICK WETTKAMPF-BACKUP (.ZIP INKL. ALLER MP3S, KATEGORIEN & HIGHLIGHTS) -->
+        <div class="autogain-box backup-zip-box">
+          <div class="update-header">
+            <span data-i18n="backup_zip_heading">💾 1-Klick Wettkampf-Backup &amp; Umzug (.zip inkl. MP3s)</span>
+            <span class="update-version-badge" data-i18n="backup_zip_badge">Komplett-Sicherung</span>
+          </div>
+          <div class="update-cur-sub" data-i18n="backup_zip_sub">
+            Sichert dein komplettes Soundboard inklusive aller hochgeladenen MP3-Dateien, Kategorien, Lautstärken, BPM-Werte und gesetzten Highlights in einer einzigen .zip-Datei – ideal zum Sichern oder für den schnellen Umzug auf einen anderen Hallen-Laptop:
+          </div>
+          <div class="update-actions-row">
+            <a href="/api/backup/full.zip" download class="btn btn-primary" id="downloadFullZipBtn" data-i18n="backup_full_zip_btn">
+              📦 Komplettes Soundboard (.zip inkl. MP3s) herunterladen
+            </a>
+            <button type="button" class="btn btn-secondary" id="restoreFullZipBtn" data-i18n="restore_full_zip_btn">
+              📂 Backup (.zip) wiederherstellen / einspielen
+            </button>
+            <input type="file" id="restoreFullZipInput" accept=".zip,application/zip" hidden />
+            <a href="/api/export" download="arena_dj_backup.json" class="btn btn-secondary" data-i18n="backup_btn">
+              📄 Nur Einstellungen (.json)
+            </a>
+            <span class="autogain-status-msg hidden" id="backupZipStatusMsg"></span>
+          </div>
         </div>
       </div>
 
@@ -1099,7 +1150,7 @@
     </div>
   </div>
 
-  <script src="/i18n.js?v=20261115c"></script>
-  <script src="/app.js?v=20261115c"></script>
+  <script src="/i18n.js?v=20261115d"></script>
+  <script src="/app.js?v=20261115d"></script>
 </body>
 </html>
