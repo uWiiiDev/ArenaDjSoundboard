@@ -22,6 +22,9 @@ const state = {
     design_theme: getTheme(),
     language: getLang(),
     panel_order: localStorage.getItem("arena_dj_panel_order") || "songs,fader,deck",
+    deck_widget_order:
+      localStorage.getItem("arena_dj_deck_widget_order") ||
+      "info,queue,waveform,spectrum,eq,speed,transport",
   },
   serverInfo: {
     lan_url: window.location.origin,
@@ -2031,6 +2034,10 @@ async function loadStateFromServer() {
       state.settings.panel_order = data.settings.panel_order;
       localStorage.setItem("arena_dj_panel_order", data.settings.panel_order);
     }
+    if (data.settings.deck_widget_order) {
+      state.settings.deck_widget_order = data.settings.deck_widget_order;
+      localStorage.setItem("arena_dj_deck_widget_order", data.settings.deck_widget_order);
+    }
     if (data.settings.eq_enabled !== undefined) {
       state.eqEnabled = data.settings.eq_enabled !== "false";
     }
@@ -2062,6 +2069,7 @@ async function loadStateFromServer() {
   }
 
   applyPanelOrder();
+  applyDeckWidgetOrder();
   syncVizAndEqUI();
   updateSfxUI();
 
@@ -2762,6 +2770,29 @@ function applyPanelOrder() {
   });
 }
 
+function applyDeckWidgetOrder() {
+  const container = document.getElementById("deckWidgetsContainer");
+  if (!container) return;
+  const order = (
+    state.settings.deck_widget_order || "info,queue,waveform,spectrum,eq,speed,transport"
+  )
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const currentIds = Array.from(container.querySelectorAll(":scope > .deck-widget")).map(
+    (el) => el.dataset.deckWidget
+  );
+  if (currentIds.join(",") === order.join(",")) return;
+
+  order.forEach((widgetId) => {
+    const el = container.querySelector(`:scope > .deck-widget[data-deck-widget="${widgetId}"]`);
+    if (el) {
+      container.appendChild(el);
+    }
+  });
+}
+
 function updatePlayerUI() {
   const onAirBadge = document.getElementById("onAirBadge");
   const deckDot = document.getElementById("deckDot");
@@ -3416,6 +3447,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Drag & Drop für die 3 Cockpit-Elemente (Liste | Regler | Aktuelles Lied) mit FLIP-Animation
   initPanelDragAndDrop(workspaceEl);
+  initDeckWidgetDragAndDrop(document.getElementById("deckWidgetsContainer"));
 
   // Mobile Mini-Player Direkt-Buttons
   document.getElementById("mobPlayPauseBtn").addEventListener("click", togglePlayPause);
@@ -3538,6 +3570,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Live-Waveform Klick zum Springen im laufenden Lied
   document.getElementById("npWaveformWrap").addEventListener("click", (e) => {
+    if (e.target.closest(".deck-widget-drag-handle")) return;
     if (!state.currentTrack) return;
     const canvas = document.getElementById("npWaveformCanvas");
     const rect = canvas.getBoundingClientRect();
@@ -5716,5 +5749,149 @@ function bindTrackDragAndDrop(grid) {
 
     handle.addEventListener("pointerup", finishTrackDrag);
     handle.addEventListener("pointercancel", finishTrackDrag);
+  });
+}
+
+/**
+ * Universelles Touch- & Maus-Drag-and-Drop für die einzelnen Bereiche
+ * innerhalb des Moduls "Aktuelles Lied" (#deckWidgetsContainer)
+ */
+function initDeckWidgetDragAndDrop(container) {
+  if (!container) return;
+
+  let draggedWidget = null;
+  let pointerId = null;
+  let startClientX = 0;
+  let startClientY = 0;
+  let layoutAnchorTop = 0;
+
+  container.querySelectorAll(".deck-widget-drag-handle").forEach((handle) => {
+    handle.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    handle.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const widget = handle.closest(".deck-widget");
+      if (!widget) return;
+
+      draggedWidget = widget;
+      pointerId = e.pointerId;
+      startClientX = e.clientX;
+      startClientY = e.clientY;
+      layoutAnchorTop = widget.getBoundingClientRect().top;
+
+      widget.style.transition = "none";
+      widget.classList.add("is-dragging-widget");
+      try {
+        handle.setPointerCapture(pointerId);
+      } catch (_) {}
+    });
+
+    handle.addEventListener("pointermove", (e) => {
+      if (!draggedWidget || e.pointerId !== pointerId) return;
+
+      const dx = (e.clientX - startClientX) * 0.12;
+      let dy = e.clientY - startClientY;
+      draggedWidget.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(1.015)`;
+
+      const draggedRect = draggedWidget.getBoundingClientRect();
+      const draggedCenterY = draggedRect.top + draggedRect.height / 2;
+
+      const visibleWidgets = Array.from(
+        container.querySelectorAll(":scope > .deck-widget:not(.hidden)")
+      );
+      const curIdx = visibleWidgets.indexOf(draggedWidget);
+      if (curIdx === -1) return;
+
+      let swapTarget = null;
+      let insertBeforeNode = null;
+
+      if (curIdx > 0) {
+        const prev = visibleWidgets[curIdx - 1];
+        const prevRect = prev.getBoundingClientRect();
+        if (draggedCenterY < prevRect.top + prevRect.height * 0.52) {
+          swapTarget = prev;
+          insertBeforeNode = prev;
+        }
+      }
+
+      if (!swapTarget && curIdx < visibleWidgets.length - 1) {
+        const next = visibleWidgets[curIdx + 1];
+        const nextRect = next.getBoundingClientRect();
+        if (draggedCenterY > nextRect.top + nextRect.height * 0.48) {
+          swapTarget = next;
+          insertBeforeNode = next.nextSibling;
+        }
+      }
+
+      if (swapTarget) {
+        const oldPositions = new Map();
+        visibleWidgets.forEach((el) => {
+          if (el !== draggedWidget) {
+            oldPositions.set(el, el.getBoundingClientRect().top);
+          }
+        });
+
+        draggedWidget.style.transform = "none";
+        container.insertBefore(draggedWidget, insertBeforeNode);
+
+        const newAnchorTop = draggedWidget.getBoundingClientRect().top;
+        startClientY += newAnchorTop - layoutAnchorTop;
+        layoutAnchorTop = newAnchorTop;
+
+        dy = e.clientY - startClientY;
+        draggedWidget.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(1.015)`;
+
+        oldPositions.forEach((oldTop, el) => {
+          const newTop = el.getBoundingClientRect().top;
+          const invertY = oldTop - newTop;
+          if (Math.abs(invertY) > 0.5) {
+            el.style.transition = "none";
+            el.style.transform = `translate3d(0, ${invertY}px, 0)`;
+            requestAnimationFrame(() => {
+              el.style.transition = "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)";
+              el.style.transform = "";
+            });
+          }
+        });
+      }
+    });
+
+    function finishWidgetDrag(e) {
+      if (!draggedWidget || e.pointerId !== pointerId) return;
+      const widget = draggedWidget;
+      draggedWidget = null;
+
+      try {
+        handle.releasePointerCapture(pointerId);
+      } catch (_) {}
+      pointerId = null;
+
+      widget.style.transition = "transform 200ms cubic-bezier(0.22, 1, 0.36, 1)";
+      widget.style.transform = "";
+      widget.classList.remove("is-dragging-widget");
+
+      const newOrder = Array.from(container.querySelectorAll(":scope > .deck-widget"))
+        .map((el) => el.dataset.deckWidget)
+        .filter(Boolean)
+        .join(",");
+
+      if (newOrder && newOrder !== state.settings.deck_widget_order) {
+        state.settings.deck_widget_order = newOrder;
+        localStorage.setItem("arena_dj_deck_widget_order", newOrder);
+        fetch("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deck_widget_order: newOrder }),
+        }).catch(() => {});
+      }
+    }
+
+    handle.addEventListener("pointerup", finishWidgetDrag);
+    handle.addEventListener("pointercancel", finishWidgetDrag);
   });
 }

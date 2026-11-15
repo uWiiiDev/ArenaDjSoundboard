@@ -12,7 +12,7 @@
   <link rel="alternate icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="stylesheet" href="/styles.css?v=20261115e" />
+  <link rel="stylesheet" href="/styles.css?v=20261115f" />
 </head>
 <body>
   <!-- RESUME BANNER FÜR LOKALEN GERÄTE-TON NACH ERZWUNGENEM SEITEN-RELOAD (iOS SAFARI) -->
@@ -535,36 +535,45 @@
         </div>
       </div>
 
-      <div class="deck-card cockpit-card-inner">
-        <div class="deck-header">
-          <div class="deck-header-left">
-            <span class="deck-status-dot" id="deckDot"></span>
-            <span class="deck-status-text" id="deckStatusText">Bereit für nächsten Einsatz</span>
-          </div>
-          <button type="button" class="btn-loop-pill" id="btnNowPlayingLoop" disabled data-i18n-title="np_loop_title" title="Aktuelles Lied als Endlosschleife wiederholen">
-            🔁 Endlos: AUS
-          </button>
-        </div>
-
-        <div class="now-playing-info">
-          <div class="np-title" id="npTitle">Kein Lied geladen</div>
-          <div class="np-cue" id="npCue">Tippe auf ein Highlight-Pad zum Starten</div>
-          <div class="np-next-row hidden" id="npNextRow">
-            <span class="np-next-text" id="npNextText">⏭ Danach: –</span>
-            <button type="button" class="btn-skip-next" id="btnSkipNext" data-i18n="skip_next_btn" data-i18n-title="skip_next_title" title="Sofort zum nächsten Lied springen">⏭ Nächstes</button>
-          </div>
-          <!-- WUNSCH-WARTESCHLANGE ("ALS NÄCHSTES SPIELEN" / QUEUE) -->
-          <div class="deck-queue-box hidden" id="deckQueueBox">
-            <div class="deck-queue-header">
-              <span class="deck-queue-title" id="deckQueueTitle">📋 Warteschlange (0)</span>
-              <button type="button" class="btn-queue-clear" id="clearQueueBtn" data-i18n="queue_clear_btn">Leeren</button>
+      <div class="deck-card cockpit-card-inner" id="deckWidgetsContainer">
+        <!-- WIDGET 1: STATUS & AKTUELLES LIED INFO -->
+        <div class="deck-widget deck-info-widget" data-deck-widget="info">
+          <div class="deck-header">
+            <div class="deck-header-left">
+              <span class="deck-widget-drag-handle" data-i18n-title="deck_widget_drag_title" title="Bereich per Ziehen (Drag & Drop) verschieben">⠿</span>
+              <span class="deck-status-dot" id="deckDot"></span>
+              <span class="deck-status-text" id="deckStatusText">Bereit für nächsten Einsatz</span>
             </div>
-            <div class="deck-queue-list" id="deckQueueList"></div>
+            <button type="button" class="btn-loop-pill" id="btnNowPlayingLoop" disabled data-i18n-title="np_loop_title" title="Aktuelles Lied als Endlosschleife wiederholen">
+              🔁 Endlos: AUS
+            </button>
+          </div>
+
+          <div class="now-playing-info">
+            <div class="np-title" id="npTitle">Kein Lied geladen</div>
+            <div class="np-cue" id="npCue">Tippe auf ein Highlight-Pad zum Starten</div>
+            <div class="np-next-row hidden" id="npNextRow">
+              <span class="np-next-text" id="npNextText">⏭ Danach: –</span>
+              <button type="button" class="btn-skip-next" id="btnSkipNext" data-i18n="skip_next_btn" data-i18n-title="skip_next_title" title="Sofort zum nächsten Lied springen">⏭ Nächstes</button>
+            </div>
           </div>
         </div>
 
-        <!-- INTERAKTIVE LIVE-WAVEFORM & FORTSCHRITT -->
-        <div class="np-waveform-wrap" id="npWaveformWrap" data-i18n-title="np_waveform_title" title="Tippen zum Springen im Lied">
+        <!-- WIDGET 2: WUNSCH-WARTESCHLANGE ("ALS NÄCHSTES SPIELEN" / QUEUE) -->
+        <div class="deck-queue-box deck-widget hidden" id="deckQueueBox" data-deck-widget="queue">
+          <div class="deck-queue-header">
+            <span class="deck-queue-header-left">
+              <span class="deck-widget-drag-handle" data-i18n-title="deck_widget_drag_title" title="Bereich per Ziehen (Drag & Drop) verschieben">⠿</span>
+              <span class="deck-queue-title" id="deckQueueTitle">📋 Warteschlange (0)</span>
+            </span>
+            <button type="button" class="btn-queue-clear" id="clearQueueBtn" data-i18n="queue_clear_btn">Leeren</button>
+          </div>
+          <div class="deck-queue-list" id="deckQueueList"></div>
+        </div>
+
+        <!-- WIDGET 3: INTERAKTIVE LIVE-WAVEFORM & FORTSCHRITT -->
+        <div class="np-waveform-wrap deck-widget" id="npWaveformWrap" data-deck-widget="waveform" data-i18n-title="np_waveform_title" title="Tippen zum Springen im Lied">
+          <span class="deck-widget-drag-handle deck-floating-handle" data-i18n-title="deck_widget_drag_title" title="Bereich per Ziehen (Drag & Drop) verschieben">⠿</span>
           <canvas id="npWaveformCanvas" width="500" height="78"></canvas>
           <div class="np-time-row">
             <span id="npCurrentTime">0:00.0</span>
@@ -573,10 +582,13 @@
           </div>
         </div>
 
-        <!-- AUSBLENDBARER 24-BAND LIVE-SPEKTRUMANALYZER -->
-        <div class="spectrum-panel" id="spectrumPanel">
+        <!-- WIDGET 4: AUSBLENDBARER 24-BAND LIVE-SPEKTRUMANALYZER -->
+        <div class="spectrum-panel deck-widget" id="spectrumPanel" data-deck-widget="spectrum">
           <div class="spectrum-header">
-            <span class="spectrum-title" data-i18n="spectrum_panel_title">📊 SPEKTRUMANALYZER</span>
+            <span class="spectrum-header-left">
+              <span class="deck-widget-drag-handle" data-i18n-title="deck_widget_drag_title" title="Bereich per Ziehen (Drag & Drop) verschieben">⠿</span>
+              <span class="spectrum-title" data-i18n="spectrum_panel_title">📊 SPEKTRUMANALYZER</span>
+            </span>
             <div class="spectrum-actions">
               <button
                 type="button"
@@ -611,10 +623,11 @@
           </div>
         </div>
 
-        <!-- AUSBLENDBARER 5-BAND EQUALIZER -->
-        <div class="eq-panel hidden" id="eqPanel">
+        <!-- WIDGET 5: AUSBLENDBARER 5-BAND EQUALIZER -->
+        <div class="eq-panel deck-widget hidden" id="eqPanel" data-deck-widget="eq">
           <div class="eq-header">
             <div class="eq-header-left">
+              <span class="deck-widget-drag-handle" data-i18n-title="deck_widget_drag_title" title="Bereich per Ziehen (Drag & Drop) verschieben">⠿</span>
               <span class="eq-title" data-i18n="eq_panel_title">🎚️ EQUALIZER</span>
               <button type="button" class="btn-eq-power active" id="eqEnableBtn" title="Equalizer aktivieren / Bypass">
                 ON
@@ -699,8 +712,9 @@
           </div>
         </div>
 
-        <!-- LIVE-GESCHWINDIGKEIT / TEMPO & PITCH REGLER (80% .. 120%) -->
-        <div class="speed-control-bar" id="speedControlBar">
+        <!-- WIDGET 6: LIVE-GESCHWINDIGKEIT / TEMPO & PITCH REGLER (80% .. 120%) -->
+        <div class="speed-control-bar deck-widget" id="speedControlBar" data-deck-widget="speed">
+          <span class="deck-widget-drag-handle" data-i18n-title="deck_widget_drag_title" title="Bereich per Ziehen (Drag & Drop) verschieben">⠿</span>
           <span class="speed-label" data-i18n="speed_label">⚡ Tempo:</span>
           <button type="button" class="btn-speed-step" id="speedDownBtn" title="-2%">-2%</button>
           <input type="range" class="speed-slider" id="playbackSpeedSlider" min="80" max="120" step="1" value="100" aria-label="Tempo / Pitch" />
@@ -708,23 +722,26 @@
           <button type="button" class="btn-speed-reset" id="speedResetBtn" title="Auf 100% Originaltempo zurücksetzen">100%</button>
         </div>
 
-        <!-- TRANSPORT & FADE CONTROLS -->
-        <div class="transport-grid">
-          <button class="btn-transport btn-play-pause" id="btnPlayPause" disabled>
-            <span class="t-icon" id="playPauseIcon">▶</span>
-            <span class="t-label" id="playPauseLabel">START</span>
-          </button>
+        <!-- WIDGET 7: TRANSPORT & FADE CONTROLS -->
+        <div class="deck-transport-wrap deck-widget" data-deck-widget="transport">
+          <span class="deck-widget-drag-handle deck-transport-handle" data-i18n-title="deck_widget_drag_title" title="Bereich per Ziehen (Drag & Drop) verschieben">⠿</span>
+          <div class="transport-grid">
+            <button class="btn-transport btn-play-pause" id="btnPlayPause" disabled>
+              <span class="t-icon" id="playPauseIcon">▶</span>
+              <span class="t-label" id="playPauseLabel">START</span>
+            </button>
 
-          <button class="btn-transport btn-fade-out" id="btnFadeOut" disabled>
-            <span class="t-icon">📉</span>
-            <span class="t-label" data-i18n="fade_out_btn">SANFT AUSBLENDEN</span>
-            <span class="t-sub" id="fadeOutSubLabel">2.0s Fade-Out</span>
-          </button>
+            <button class="btn-transport btn-fade-out" id="btnFadeOut" disabled>
+              <span class="t-icon">📉</span>
+              <span class="t-label" data-i18n="fade_out_btn">SANFT AUSBLENDEN</span>
+              <span class="t-sub" id="fadeOutSubLabel">2.0s Fade-Out</span>
+            </button>
 
-          <button class="btn-transport btn-stop" id="btnStopImmediate" disabled>
-            <span class="t-icon">⏹</span>
-            <span class="t-label" data-i18n="stop_immediate_btn">SOFORT-STOP</span>
-          </button>
+            <button class="btn-transport btn-stop" id="btnStopImmediate" disabled>
+              <span class="t-icon">⏹</span>
+              <span class="t-label" data-i18n="stop_immediate_btn">SOFORT-STOP</span>
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -1217,7 +1234,7 @@
     </div>
   </div>
 
-  <script src="/i18n.js?v=20261115e"></script>
-  <script src="/app.js?v=20261115e"></script>
+  <script src="/i18n.js?v=20261115f"></script>
+  <script src="/app.js?v=20261115f"></script>
 </body>
 </html>

@@ -429,6 +429,7 @@ const TRANSLATIONS = {
     hk_sfx_4: "🚨 Jingle-Pad 4",
     hk_sfx_5: "🚨 Jingle-Pad 5",
     hk_sfx_6: "🚨 Jingle-Pad 6",
+    deck_widget_drag_title: "Bereich per Ziehen (Drag & Drop) nach oben/unten verschieben",
   },
 
   en: {
@@ -827,6 +828,7 @@ const TRANSLATIONS = {
     hk_sfx_4: "🚨 Jingle Pad 4",
     hk_sfx_5: "🚨 Jingle Pad 5",
     hk_sfx_6: "🚨 Jingle Pad 6",
+    deck_widget_drag_title: "Drag & drop to move this section up/down",
   },
 
   fr: {
@@ -1225,6 +1227,7 @@ const TRANSLATIONS = {
     hk_sfx_4: "🚨 Jingle 4",
     hk_sfx_5: "🚨 Jingle 5",
     hk_sfx_6: "🚨 Jingle 6",
+    deck_widget_drag_title: "Glisser-déposer pour déplacer cette section vers le haut/bas",
   },
 };
 
