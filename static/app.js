@@ -90,6 +90,11 @@ const state = {
 
   // Lokales Vorhören (Pre-Listen / Cue-Kopfhörer unabhängig vom Hallen-Server-Ton)
   prelistenTrackId: null,
+
+  // 🚨 Schnell-Jingles / Sofort-Soundeffekte (#1)
+  sfxBarVisible: localStorage.getItem("arena_dj_sfx_bar") !== "0",
+  sfxDuckEnabled: localStorage.getItem("arena_dj_sfx_duck") !== "0",
+  activeSfxId: null,
 };
 
 // ============================================================================
@@ -238,6 +243,93 @@ prelistenAudio.addEventListener("ended", () => {
   stopPrelisten();
 });
 
+const sfxAudio = new Audio();
+sfxAudio.preload = "auto";
+sfxAudio.playsInline = true;
+sfxAudio.setAttribute("playsinline", "");
+sfxAudio.setAttribute("webkit-playsinline", "");
+
+function updateSfxUI() {
+  const bar = document.getElementById("sfxQuickBar");
+  const toggleBtn = document.getElementById("sfxBarToggleBtn");
+  const duckBtn = document.getElementById("sfxDuckToggleBtn");
+  const stopBtn = document.getElementById("sfxStopBtn");
+
+  if (bar) {
+    bar.classList.toggle("hidden", !state.sfxBarVisible);
+  }
+  if (toggleBtn) {
+    toggleBtn.classList.toggle("active", state.sfxBarVisible);
+  }
+  if (duckBtn) {
+    duckBtn.classList.toggle("active", state.sfxDuckEnabled);
+  }
+  if (stopBtn) {
+    stopBtn.classList.toggle("hidden", !state.activeSfxId);
+  }
+
+  document.querySelectorAll(".sfx-pad-btn[data-sfx-id]").forEach((btn) => {
+    btn.classList.toggle("is-playing", btn.dataset.sfxId === state.activeSfxId);
+  });
+}
+
+function triggerSfx(sfxId) {
+  if (!sfxId) return;
+  if (isServerMode()) {
+    state.activeSfxId = sfxId;
+    updateSfxUI();
+    sendServerCommand({
+      action: "trigger_sfx",
+      sfx_id: sfxId,
+      duck_music: state.sfxDuckEnabled,
+    });
+    return;
+  }
+
+  state.activeSfxId = sfxId;
+  const targetUrl = `/sfx/${encodeURIComponent(sfxId)}.wav`;
+  if (!sfxAudio.src || !sfxAudio.src.endsWith(targetUrl)) {
+    sfxAudio.src = targetUrl;
+  } else {
+    try {
+      sfxAudio.currentTime = 0;
+    } catch (_) {}
+  }
+  sfxAudio.volume = Math.max(0.25, Math.min(1.0, state.settings.master_volume * 1.05));
+  applyEffectiveVolume();
+  updateSfxUI();
+  const p = sfxAudio.play();
+  if (p !== undefined) {
+    p.catch(() => {
+      state.activeSfxId = null;
+      applyEffectiveVolume();
+      updateSfxUI();
+    });
+  }
+}
+
+function stopSfx() {
+  if (isServerMode()) {
+    state.activeSfxId = null;
+    updateSfxUI();
+    sendServerCommand({ action: "stop_sfx" });
+    return;
+  }
+  try {
+    sfxAudio.pause();
+    sfxAudio.currentTime = 0;
+  } catch (_) {}
+  state.activeSfxId = null;
+  applyEffectiveVolume();
+  updateSfxUI();
+}
+
+sfxAudio.addEventListener("ended", () => {
+  state.activeSfxId = null;
+  applyEffectiveVolume();
+  updateSfxUI();
+});
+
 function ensureAudioContext() {
   // Hinweis für iPadOS / iOS Safari:
   // Wir binden KEIN WebAudio createMediaElementSource(deck.audio) an die <audio>-Elemente,
@@ -255,7 +347,8 @@ function ensureAudioContext() {
 function applyEffectiveVolume() {
   const master = state.settings.master_volume;
   const duckFactor = state.duckMultiplier;
-  const busGain = Math.max(0, Math.min(1.5, master * duckFactor));
+  const sfxDuck = !isServerMode() && state.activeSfxId && state.sfxDuckEnabled ? 0.42 : 1.0;
+  const busGain = Math.max(0, Math.min(1.5, master * duckFactor * sfxDuck));
 
   decks.forEach((deck) => {
     const deckLevel = Math.max(0, Math.min(1.5, deck.trackVolume * deck.fadeGain));
@@ -825,6 +918,8 @@ function applyServerPlayerStatus(ps) {
   state.serverCurrentTime = Number(ps.current_time || 0);
   state.serverEffectivePct = Number(ps.effective_volume_pct ?? 85);
   state.serverNextTrackId = ps.next_track_id ? Number(ps.next_track_id) : null;
+  state.activeSfxId = ps.active_sfx || null;
+  updateSfxUI();
   if (Array.isArray(ps.spectrum) && ps.spectrum.length >= 24) {
     state.serverSpectrum = ps.spectrum.slice(0, 24);
   }
@@ -3346,6 +3441,73 @@ document.addEventListener("DOMContentLoaded", () => {
     stopPrelisten();
   });
 
+  // ✂️ Stille am Anfang & Ende entfernen (im Highlight-Editor für das aktuelle Lied)
+  const trimSilenceTrackBtn = document.getElementById("trimSilenceTrackBtn");
+  if (trimSilenceTrackBtn) {
+    trimSilenceTrackBtn.addEventListener("click", async () => {
+      if (!state.editingTrackId) return;
+      const origHtml = trimSilenceTrackBtn.innerHTML;
+      trimSilenceTrackBtn.disabled = true;
+      trimSilenceTrackBtn.textContent = t("editor_trim_silence_busy");
+      try {
+        const res = await fetch(`/api/tracks/${state.editingTrackId}/trim-silence`, {
+          method: "POST",
+        });
+        const data = await res.json();
+        await loadStateFromServer();
+        const updatedTrack = state.tracks.find((tr) => tr.id === state.editingTrackId);
+        if (updatedTrack) {
+          state.editorCursorTime = Math.min(
+            state.editorCursorTime,
+            Math.max(0, Number(updatedTrack.duration || 0))
+          );
+          updateEditorTimeDisplay(updatedTrack.duration);
+          renderEditorCuesList(updatedTrack);
+          drawEditorWaveform(updatedTrack);
+        }
+        const totalRemoved = Number(data.removed_start || 0) + Number(data.removed_end || 0);
+        if (res.ok && data.trimmed && totalRemoved > 0) {
+          trimSilenceTrackBtn.textContent = t("editor_trim_silence_done", {
+            sec: totalRemoved.toFixed(1),
+          });
+        } else {
+          trimSilenceTrackBtn.textContent = t("editor_trim_silence_none");
+        }
+        setTimeout(() => {
+          trimSilenceTrackBtn.innerHTML = origHtml;
+          applyStaticTranslations();
+        }, 2300);
+      } catch (_) {
+        trimSilenceTrackBtn.innerHTML = origHtml;
+        applyStaticTranslations();
+      } finally {
+        trimSilenceTrackBtn.disabled = false;
+      }
+    });
+  }
+
+  // 🚨 Schnell-Jingles / Sofort-Soundeffekte (#1)
+  updateSfxUI();
+  document.getElementById("sfxBarToggleBtn")?.addEventListener("click", () => {
+    state.sfxBarVisible = !state.sfxBarVisible;
+    localStorage.setItem("arena_dj_sfx_bar", state.sfxBarVisible ? "1" : "0");
+    updateSfxUI();
+  });
+  document.getElementById("sfxDuckToggleBtn")?.addEventListener("click", () => {
+    state.sfxDuckEnabled = !state.sfxDuckEnabled;
+    localStorage.setItem("arena_dj_sfx_duck", state.sfxDuckEnabled ? "1" : "0");
+    applyEffectiveVolume();
+    updateSfxUI();
+  });
+  document.getElementById("sfxStopBtn")?.addEventListener("click", () => {
+    stopSfx();
+  });
+  document.querySelectorAll(".sfx-pad-btn[data-sfx-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      triggerSfx(btn.dataset.sfxId);
+    });
+  });
+
   // Lied-Stammdaten speichern
   document.getElementById("saveTrackMetaBtn").addEventListener("click", saveEditorTrackMetadata);
 
@@ -4039,6 +4201,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const checkUpdateBtn = document.getElementById("checkUpdateBtn");
   const normalizeAllTracksBtn = document.getElementById("normalizeAllTracksBtn");
+  const trimAllTracksSilenceBtn = document.getElementById("trimAllTracksSilenceBtn");
   const normalizeAllStatusMsg = document.getElementById("normalizeAllStatusMsg");
 
   if (normalizeAllTracksBtn) {
@@ -4066,6 +4229,36 @@ document.addEventListener("DOMContentLoaded", () => {
       } finally {
         normalizeAllTracksBtn.disabled = false;
         normalizeAllTracksBtn.textContent = origText;
+      }
+    });
+  }
+
+  if (trimAllTracksSilenceBtn) {
+    trimAllTracksSilenceBtn.addEventListener("click", async () => {
+      trimAllTracksSilenceBtn.disabled = true;
+      const origText = trimAllTracksSilenceBtn.textContent;
+      trimAllTracksSilenceBtn.textContent = t("trim_all_busy");
+      if (normalizeAllStatusMsg) {
+        normalizeAllStatusMsg.textContent = t("trim_all_busy");
+        normalizeAllStatusMsg.classList.remove("hidden");
+      }
+      try {
+        const res = await fetch("/api/tracks/trim-silence-all", { method: "POST" });
+        const data = await res.json();
+        await loadStateFromServer();
+        if (res.ok && normalizeAllStatusMsg) {
+          normalizeAllStatusMsg.textContent = t("trim_all_done", {
+            count: data.trimmed_count || 0,
+            sec: data.total_removed_sec || 0,
+          });
+        }
+      } catch (_) {
+        if (normalizeAllStatusMsg) {
+          normalizeAllStatusMsg.classList.add("hidden");
+        }
+      } finally {
+        trimAllTracksSilenceBtn.disabled = false;
+        trimAllTracksSilenceBtn.textContent = origText;
       }
     });
   }

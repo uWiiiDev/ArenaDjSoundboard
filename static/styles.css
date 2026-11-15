@@ -3279,6 +3279,165 @@ body[data-theme="studio"] .btn-prelisten-toggle.active {
   color: #34d399;
 }
 
+/* ==========================================================================
+   🚨 SCHNELL-JINGLES / SOFORT-SOUNDEFFEKTE LEISTE (#1) & AUTO-TRIM SILENCE (#5)
+   ========================================================================== */
+.btn-sfx-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(251, 146, 60, 0.35);
+  background: rgba(249, 115, 22, 0.12);
+  color: #fdba74;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-sfx-toggle:hover {
+  background: rgba(249, 115, 22, 0.24);
+  border-color: rgba(251, 146, 60, 0.65);
+  color: #ffffff;
+}
+
+.btn-sfx-toggle.active {
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.28), rgba(234, 88, 12, 0.22));
+  border-color: #fb923c;
+  color: #fff7ed;
+  box-shadow: 0 0 10px rgba(249, 115, 22, 0.25);
+}
+
+.sfx-quick-bar {
+  padding: 6px 10px;
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.85));
+  border-bottom: 1px solid rgba(251, 146, 60, 0.28);
+  flex-shrink: 0;
+}
+
+.sfx-pads-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sfx-pads-row::-webkit-scrollbar {
+  display: none;
+}
+
+.sfx-pad-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 1 1 0;
+  min-width: 78px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(30, 41, 59, 0.85);
+  color: #f8fafc;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.08s ease, background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+  white-space: nowrap;
+}
+
+.sfx-pad-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(251, 146, 60, 0.65);
+  background: rgba(51, 65, 85, 0.9);
+}
+
+.sfx-pad-btn:active {
+  transform: scale(0.95);
+}
+
+.sfx-pad-horn { border-color: rgba(249, 115, 22, 0.45); background: rgba(249, 115, 22, 0.14); }
+.sfx-pad-buzzer { border-color: rgba(239, 68, 68, 0.45); background: rgba(239, 68, 68, 0.14); }
+.sfx-pad-drum { border-color: rgba(168, 85, 247, 0.45); background: rgba(168, 85, 247, 0.14); }
+.sfx-pad-fanfare { border-color: rgba(234, 179, 8, 0.45); background: rgba(234, 179, 8, 0.14); }
+.sfx-pad-applause { border-color: rgba(34, 197, 94, 0.45); background: rgba(34, 197, 94, 0.14); }
+.sfx-pad-countdown { border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.14); }
+
+.sfx-pad-btn.is-playing {
+  background: linear-gradient(135deg, #f97316, #ea580c) !important;
+  border-color: #fdba74 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 14px rgba(249, 115, 22, 0.65);
+}
+
+.sfx-pad-icon {
+  font-size: 0.88rem;
+  line-height: 1;
+}
+
+.sfx-duck-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.75);
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.14s ease;
+}
+
+.sfx-duck-pill.active {
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(14, 165, 233, 0.18);
+  color: #e0f2fe;
+}
+
+.sfx-stop-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  border: 1px solid rgba(239, 68, 68, 0.65);
+  background: rgba(239, 68, 68, 0.25);
+  color: #fecaca;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sfx-stop-pill:hover {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.btn-trim-silence {
+  border-color: rgba(52, 211, 153, 0.45);
+  color: #a7f3d0;
+  background: rgba(16, 185, 129, 0.14);
+}
+
+.btn-trim-silence:hover {
+  background: rgba(16, 185, 129, 0.26);
+  border-color: #34d399;
+  color: #ffffff;
+}
+
+
 
 
 

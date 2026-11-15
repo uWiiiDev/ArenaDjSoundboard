@@ -13,6 +13,7 @@ import subprocess
 import threading
 import time
 from typing import Callable
+import wave
 
 import numpy as np
 
@@ -21,6 +22,216 @@ CHANNELS = 2
 CHUNK_SEC = 0.05  # 50 ms pro Audio-Block (20 Updates/Sekunde für flüssige Fades)
 FRAMES_PER_CHUNK = int(SAMPLE_RATE * CHUNK_SEC)  # 2400 Stereo-Samples
 BYTES_PER_CHUNK = FRAMES_PER_CHUNK * CHANNELS * 2  # 9600 Bytes (int16 stereo)
+
+SFX_IDS = ("airhorn", "buzzer", "drumroll", "fanfare", "applause", "countdown")
+
+
+def _synthesize_sfx_stereo(sfx_id: str) -> np.ndarray:
+    """
+    Erzeugt druckvolle, realistische Stereo-Arena-Soundeffekte (48 kHz, float32 in -32768..32767).
+    """
+    sr = SAMPLE_RATE
+    rng = np.random.default_rng(abs(hash(sfx_id)) % (2**31))
+
+    if sfx_id == "airhorn":
+        # Klassisches Stadion-Airhorn: 2 kurze Stöße + 1 langer Stoß mit satten Obertönen & Hall
+        dur = 2.15
+        n = int(sr * dur)
+        t = np.arange(n, dtype=np.float32) / sr
+        env = np.zeros(n, dtype=np.float32)
+        blasts = [(0.0, 0.16), (0.21, 0.37), (0.43, 1.88)]
+        for b_start, b_end in blasts:
+            mask = (t >= b_start) & (t <= b_end)
+            bt = t[mask] - b_start
+            b_dur = b_end - b_start
+            attack = np.minimum(1.0, bt / 0.012)
+            release = np.minimum(1.0, (b_dur - bt) / 0.05)
+            env[mask] = attack * release
+
+        # Leichtes Pitch-Bend beim Anblasen + mehrstimmige Horn-Frequenzen
+        freqs_l = [466.16, 587.33, 932.33, 937.1]
+        freqs_r = [464.50, 589.10, 930.80, 935.4]
+        sig_l = np.zeros(n, dtype=np.float32)
+        sig_r = np.zeros(n, dtype=np.float32)
+        vibrato = 1.0 + 0.004 * np.sin(2.0 * np.pi * 6.5 * t)
+        for h in range(1, 8):
+            weight = 1.0 / (h ** 0.78)
+            for fl, fr in zip(freqs_l, freqs_r):
+                if fl * h < 14000:
+                    sig_l += weight * np.sin(2.0 * np.pi * (fl * h) * t * vibrato)
+                    sig_r += weight * np.sin(2.0 * np.pi * (fr * h) * t * vibrato + 0.3)
+        sig_l = np.tanh(sig_l * 0.48) * env
+        sig_r = np.tanh(sig_r * 0.48) * env
+        # Kurzes Hall-Echo
+        delay = int(0.085 * sr)
+        if n > delay:
+            sig_l[delay:] += 0.24 * sig_r[:-delay] * np.exp(-t[:-delay] * 1.4)
+            sig_r[delay:] += 0.24 * sig_l[:-delay] * np.exp(-t[:-delay] * 1.4)
+
+    elif sfx_id == "buzzer":
+        # Tiefer, massiver Hallen-Buzzer / Eishockey- & Basketball-Sirene
+        dur = 1.95
+        n = int(sr * dur)
+        t = np.arange(n, dtype=np.float32) / sr
+        env = np.minimum(1.0, t / 0.015) * np.minimum(1.0, (dur - t) / 0.14)
+        rattle = 0.78 + 0.22 * np.sin(2.0 * np.pi * 52.0 * t)
+        base_freqs = [146.83, 185.00, 220.00, 293.66]
+        sig_l = np.zeros(n, dtype=np.float32)
+        sig_r = np.zeros(n, dtype=np.float32)
+        for h in range(1, 10):
+            w = 1.0 / (h ** 0.72)
+            for idx_f, f in enumerate(base_freqs):
+                det_l = 1.0 + 0.003 * (idx_f - 1.5)
+                det_r = 1.0 - 0.003 * (idx_f - 1.5)
+                sig_l += w * np.sin(2.0 * np.pi * f * h * det_l * t)
+                sig_r += w * np.sin(2.0 * np.pi * f * h * det_r * t + 0.4)
+        sig_l = np.tanh(sig_l * 0.55) * rattle * env
+        sig_r = np.tanh(sig_r * 0.55) * rattle * env
+
+    elif sfx_id == "drumroll":
+        # Spannender Snare-Trommelwirbel (0..1.9s) + Becken-Crash & Punch-Kick am Ende!
+        dur = 2.75
+        n = int(sr * dur)
+        t = np.arange(n, dtype=np.float32) / sr
+        sig_l = np.zeros(n, dtype=np.float32)
+        sig_r = np.zeros(n, dtype=np.float32)
+
+        roll_end = 1.92
+        roll_mask = t < roll_end
+        rt = t[roll_mask]
+        crescendo = 0.28 + 0.72 * ((rt / roll_end) ** 1.45)
+        # 28 Hz Wirbel-Impulse
+        hits = np.abs(np.sin(np.pi * 28.0 * rt)) ** 3.2
+        noise_l = rng.standard_normal(len(rt)).astype(np.float32)
+        noise_r = rng.standard_normal(len(rt)).astype(np.float32)
+        # Hochpass-Effekt für Snare-Teppich + 185 Hz Kessel-Resonanz
+        snare_l = (noise_l - np.roll(noise_l, 1)) * 0.45 + 0.35 * np.sin(2.0 * np.pi * 185.0 * rt)
+        snare_r = (noise_r - np.roll(noise_r, 1)) * 0.45 + 0.35 * np.sin(2.0 * np.pi * 189.0 * rt)
+        sig_l[roll_mask] = snare_l * hits * crescendo
+        sig_r[roll_mask] = snare_r * hits * crescendo
+
+        # Finale bei 1.92s: Kick + Cymbal Crash
+        crash_mask = t >= roll_end
+        ct = t[crash_mask] - roll_end
+        kick_freq = 60.0 + 110.0 * np.exp(-ct * 24.0)
+        kick = np.sin(2.0 * np.pi * kick_freq * ct) * np.exp(-ct * 7.5) * 0.95
+        cym_l = rng.standard_normal(len(ct)).astype(np.float32)
+        cym_r = rng.standard_normal(len(ct)).astype(np.float32)
+        cym_env = np.exp(-ct * 3.1)
+        sig_l[crash_mask] = kick + (cym_l - 0.7 * np.roll(cym_l, 1)) * 0.38 * cym_env
+        sig_r[crash_mask] = kick + (cym_r - 0.7 * np.roll(cym_r, 1)) * 0.38 * cym_env
+
+    elif sfx_id == "fanfare":
+        # Strahlende Sieger-Fanfare (C-Dur Blechbläser: C4 - E4 - G4 - C5!)
+        dur = 2.45
+        n = int(sr * dur)
+        t = np.arange(n, dtype=np.float32) / sr
+        sig_l = np.zeros(n, dtype=np.float32)
+        sig_r = np.zeros(n, dtype=np.float32)
+        notes = [
+            (0.00, 0.24, [261.63, 329.63, 523.25]),
+            (0.26, 0.50, [329.63, 392.00, 659.25]),
+            (0.52, 0.76, [392.00, 523.25, 783.99]),
+            (0.80, 2.38, [261.63, 392.00, 523.25, 659.25, 1046.50]),
+        ]
+        for n_start, n_end, chord in notes:
+            mask = (t >= n_start) & (t <= n_end)
+            nt = t[mask] - n_start
+            ndur = n_end - n_start
+            env = np.minimum(1.0, nt / 0.018) * np.exp(-nt * 0.65) * np.minimum(1.0, (ndur - nt) / 0.06)
+            for f in chord:
+                for h, amp in [(1, 1.0), (2, 0.72), (3, 0.48), (4, 0.28), (5, 0.16)]:
+                    sig_l[mask] += amp * np.sin(2.0 * np.pi * (f * h * 1.001) * nt) * env
+                    sig_r[mask] += amp * np.sin(2.0 * np.pi * (f * h * 0.999) * nt + 0.25) * env
+        sig_l = np.tanh(sig_l * 0.22)
+        sig_r = np.tanh(sig_r * 0.22)
+
+    elif sfx_id == "applause":
+        # Stadion-Jubel & dichter Stereo-Applaus
+        dur = 3.0
+        n = int(sr * dur)
+        t = np.arange(n, dtype=np.float32) / sr
+        master_env = np.minimum(1.0, t / 0.22) * np.minimum(1.0, (dur - t) / 0.55)
+        sig_l = np.zeros(n, dtype=np.float32)
+        sig_r = np.zeros(n, dtype=np.float32)
+        # 240 versetzte Einzel-Klatscher im Stereo-Panorama
+        for _ in range(240):
+            c_start = int(rng.uniform(0.0, dur - 0.08) * sr)
+            c_len = int(rng.uniform(0.025, 0.065) * sr)
+            if c_start + c_len >= n:
+                continue
+            ct = np.arange(c_len, dtype=np.float32) / sr
+            c_env = np.exp(-ct * rng.uniform(45.0, 75.0))
+            burst = rng.standard_normal(c_len).astype(np.float32)
+            # Bandpass-Färbung (Handflächen-Resonanz 1.1..2.6 kHz)
+            f_res = rng.uniform(1100.0, 2600.0)
+            clap = burst * np.sin(2.0 * np.pi * f_res * ct) * c_env
+            pan = rng.uniform(0.15, 0.85)
+            sig_l[c_start : c_start + c_len] += clap * pan
+            sig_r[c_start : c_start + c_len] += clap * (1.0 - pan)
+        sig_l = np.tanh(sig_l * 0.38) * master_env
+        sig_r = np.tanh(sig_r * 0.38) * master_env
+
+    else:  # "countdown"
+        # 3 - 2 - 1 - GO! Wettkampf-Startsignal
+        dur = 3.15
+        n = int(sr * dur)
+        t = np.arange(n, dtype=np.float32) / sr
+        sig_l = np.zeros(n, dtype=np.float32)
+        sig_r = np.zeros(n, dtype=np.float32)
+        for beep_start in (0.02, 0.82, 1.62):
+            mask = (t >= beep_start) & (t <= beep_start + 0.28)
+            bt = t[mask] - beep_start
+            env = np.minimum(1.0, bt / 0.008) * np.exp(-bt * 6.5)
+            tone = np.sin(2.0 * np.pi * 880.0 * bt) + 0.35 * np.sin(2.0 * np.pi * 1760.0 * bt)
+            sig_l[mask] += tone * env * 0.75
+            sig_r[mask] += tone * env * 0.75
+        # GO-Signal bei 2.42s (1760 Hz + Akkord)
+        go_mask = (t >= 2.42) & (t <= 3.12)
+        gt = t[go_mask] - 2.42
+        go_env = np.minimum(1.0, gt / 0.01) * np.minimum(1.0, (0.70 - gt) / 0.08)
+        go_l = (
+            np.sin(2.0 * np.pi * 1760.0 * gt)
+            + 0.55 * np.sin(2.0 * np.pi * 880.0 * gt)
+            + 0.45 * np.sin(2.0 * np.pi * 1318.5 * gt)
+        ) * go_env
+        go_r = (
+            np.sin(2.0 * np.pi * 1762.0 * gt)
+            + 0.55 * np.sin(2.0 * np.pi * 879.0 * gt)
+            + 0.45 * np.sin(2.0 * np.pi * 1320.0 * gt)
+        ) * go_env
+        sig_l[go_mask] += np.tanh(go_l * 0.65)
+        sig_r[go_mask] += np.tanh(go_r * 0.65)
+
+    stereo = np.column_stack((sig_l, sig_r))
+    peak = float(np.max(np.abs(stereo)))
+    if peak > 1e-5:
+        stereo = stereo * (0.88 / peak)
+    return (stereo.reshape(-1) * 32767.0).astype(np.float32)
+
+
+def ensure_arena_sfx_files(sfx_dir: Path) -> dict[str, np.ndarray]:
+    """
+    Stellt sicher, dass alle 6 Arena-Soundeffekte als .wav in data/sfx/ liegen
+    und gibt sie als float32-Stereo-Puffer für den Echtzeit-Server-Mixer zurück.
+    """
+    sfx_dir.mkdir(parents=True, exist_ok=True)
+    buffers: dict[str, np.ndarray] = {}
+    for sfx_id in SFX_IDS:
+        wav_path = sfx_dir / f"{sfx_id}.wav"
+        buf = _synthesize_sfx_stereo(sfx_id)
+        buffers[sfx_id] = buf
+        if not wav_path.exists():
+            try:
+                pcm_int16 = np.clip(buf, -32768.0, 32767.0).astype(np.int16).tobytes()
+                with wave.open(str(wav_path), "wb") as wf:
+                    wf.setnchannels(CHANNELS)
+                    wf.setsampwidth(2)
+                    wf.setframerate(SAMPLE_RATE)
+                    wf.writeframes(pcm_int16)
+            except Exception as e:
+                print(f"Hinweis beim Erzeugen von {wav_path.name}: {e}")
+    return buffers
 
 
 class _DeckStream:
@@ -246,9 +457,33 @@ class ServerAudioEngine:
             and (shutil.which("pw-play") or shutil.which("aplay") or shutil.which("ffplay"))
         )
 
+        # 🚨 Sofort-Soundeffekte / Jingles (Overlay-Kanal auf dem Hallen-Mixer)
+        self.sfx_dir = self.uploads_dir.parent / "sfx"
+        self.sfx_buffers: dict[str, np.ndarray] = ensure_arena_sfx_files(self.sfx_dir)
+        self.active_sfx_id: str | None = None
+        self.sfx_buffer: np.ndarray | None = None
+        self.sfx_pos: int = 0
+        self.sfx_duck_music: bool = True
+
         self._running = True
         self._thread = threading.Thread(target=self._mixer_loop, daemon=True)
         self._thread.start()
+
+    def trigger_sfx(self, sfx_id: str, duck_music: bool = True):
+        with self.lock:
+            buf = self.sfx_buffers.get(str(sfx_id))
+            if buf is None:
+                return
+            self.active_sfx_id = str(sfx_id)
+            self.sfx_buffer = buf
+            self.sfx_pos = 0
+            self.sfx_duck_music = bool(duck_music)
+
+    def stop_sfx(self):
+        with self.lock:
+            self.active_sfx_id = None
+            self.sfx_buffer = None
+            self.sfx_pos = 0
 
     def _update_eq_curve_locked(self):
         if not self.eq_enabled or all(abs(g) < 0.05 for g in self.eq_gains_db):
@@ -667,6 +902,8 @@ class ServerAudioEngine:
                 except Exception:
                     pass
 
+            sfx_active = self.sfx_buffer is not None and self.sfx_pos < len(self.sfx_buffer)
+
             return {
                 "audio_available": self.audio_available,
                 "is_playing": not active.paused,
@@ -685,6 +922,7 @@ class ServerAudioEngine:
                 "eq_preset": self.eq_preset,
                 "eq_bands": [round(float(g), 1) for g in self.eq_gains_db],
                 "spectrum": [round(float(s), 1) for s in self.spectrum_bands],
+                "active_sfx": self.active_sfx_id if sfx_active else None,
             }
 
     def _apply_eq_and_spectrum_locked(self, mixed_flat: np.ndarray) -> np.ndarray:
@@ -733,7 +971,8 @@ class ServerAudioEngine:
 
             with self.lock:
                 any_active = any(not d.paused for d in self.decks)
-                if not any_active:
+                sfx_active = self.sfx_buffer is not None and self.sfx_pos < len(self.sfx_buffer)
+                if not any_active and not sfx_active:
                     self._close_output_sink()
                     self._eq_hist.fill(0.0)
                     for i in range(self.num_spectrum_bands):
@@ -769,10 +1008,29 @@ class ServerAudioEngine:
                         self.is_crossfading = False
 
                     # Prüfen auf Loop, Highlight-Ende & Auto-Crossfade am aktiven Deck
-                    self._check_transitions_locked()
+                    if any_active:
+                        self._check_transitions_locked()
 
-                    bus_gain = max(0.0, min(1.5, self.master_volume * self.duck_multiplier))
+                    sfx_duck_factor = 0.42 if (sfx_active and self.sfx_duck_music) else 1.0
+                    bus_gain = max(
+                        0.0,
+                        min(1.5, self.master_volume * self.duck_multiplier * sfx_duck_factor),
+                    )
                     mixed *= bus_gain
+
+                    # Sofort-Soundeffekt (Jingle / SFX Overlay) darübermischen
+                    if sfx_active and self.sfx_buffer is not None:
+                        need = FRAMES_PER_CHUNK * CHANNELS
+                        rem = len(self.sfx_buffer) - self.sfx_pos
+                        take = min(need, rem)
+                        sfx_gain = max(0.25, min(1.35, self.master_volume * 1.05))
+                        mixed[:take] += self.sfx_buffer[self.sfx_pos : self.sfx_pos + take] * sfx_gain
+                        self.sfx_pos += take
+                        if self.sfx_pos >= len(self.sfx_buffer):
+                            self.active_sfx_id = None
+                            self.sfx_buffer = None
+                            self.sfx_pos = 0
+
                     mixed = self._apply_eq_and_spectrum_locked(mixed)
                     np.clip(mixed, -32768.0, 32767.0, out=mixed)
                     pcm_bytes = mixed.astype(np.int16).tobytes()

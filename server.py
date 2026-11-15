@@ -744,6 +744,97 @@ def detect_track_auto_cues(filepath: Path, duration: float) -> list[dict]:
     return cues
 
 
+def trim_track_silence_file(filepath: Path) -> tuple[bool, float, float]:
+    """
+    Erkennt Totstille am Anfang (>= 0.20s) und am Ende (>= 0.35s) einer Audiodatei
+    und schneidet sie verlustfrei per ffmpeg (-c copy) ab, damit das Lied im Wettkampf
+    ohne Verzögerung auf die Zehntelsekunde genau startet und am Ende sauber überblendet.
+    Gibt (trimmed: bool, removed_start_sec: float, removed_end_sec: float) zurück.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(filepath),
+                "-ac",
+                "1",
+                "-ar",
+                "4000",
+                "-f",
+                "s16le",
+                "-",
+            ],
+            capture_output=True,
+            timeout=25,
+        )
+        raw = proc.stdout
+        total_samples = len(raw) // 2
+        if total_samples < 4000:
+            return False, 0.0, 0.0
+
+        import numpy as np
+
+        arr = np.abs(
+            np.frombuffer(raw[: total_samples * 2], dtype=np.int16).astype(np.float32) / 32768.0
+        )
+        win_len = 100  # 25 ms Fenster bei 4000 Hz
+        n_wins = total_samples // win_len
+        if n_wins < 20:
+            return False, 0.0, 0.0
+
+        win_peaks = np.max(arr[: n_wins * win_len].reshape((n_wins, win_len)), axis=1)
+        max_peak = float(np.max(win_peaks))
+        if max_peak < 1e-3:
+            return False, 0.0, 0.0
+
+        # Schwellwert: -36.5 dB relativ zum Song-Peak, mindestens -48 dBFS
+        thresh = max(0.004, max_peak * 0.015)
+        active_indices = np.flatnonzero(win_peaks >= thresh)
+        if len(active_indices) == 0:
+            return False, 0.0, 0.0
+
+        total_dur = (n_wins * win_len) / 4000.0
+        first_sec = float(active_indices[0]) * 0.025
+        last_sec = float(active_indices[-1] + 1) * 0.025
+
+        # 40ms Sicherheits-Vorlauf am Start & 150ms natürlicher Ausklang am Ende
+        cut_start = max(0.0, round(first_sec - 0.04, 3))
+        cut_end = min(total_dur, round(last_sec + 0.15, 3))
+
+        rem_start = cut_start if cut_start >= 0.20 else 0.0
+        rem_end = round(total_dur - cut_end, 3) if (total_dur - cut_end) >= 0.35 else 0.0
+
+        if rem_start <= 0.0 and rem_end <= 0.0:
+            return False, 0.0, 0.0
+
+        eff_start = rem_start
+        eff_end = total_dur - rem_end
+        if eff_end - eff_start < 1.0:
+            return False, 0.0, 0.0
+
+        tmp_path = filepath.with_name(f".trim_{uuid.uuid4().hex[:6]}_{filepath.name}")
+        cmd = ["ffmpeg", "-y", "-v", "error"]
+        if eff_start > 0.0:
+            cmd += ["-ss", f"{eff_start:.3f}"]
+        if rem_end > 0.0:
+            cmd += ["-to", f"{eff_end:.3f}"]
+        cmd += ["-i", str(filepath), "-c", "copy", str(tmp_path)]
+
+        res = subprocess.run(cmd, capture_output=True, timeout=25)
+        if res.returncode == 0 and tmp_path.is_file() and tmp_path.stat().st_size > 4096:
+            tmp_path.replace(filepath)
+            return True, round(rem_start, 2), round(rem_end, 2)
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+    except Exception as e:
+        print(f"Hinweis beim automatischen Stille-Entfernen: {e}")
+
+    return False, 0.0, 0.0
+
+
 SPOTDL_VENV_DIR = Path.home() / ".local" / "share" / "arena-dj-soundboard" / "spotdl-venv"
 YTDLP_STANDALONE_PATH = Path.home() / ".local" / "share" / "arena-dj-soundboard" / "bin" / "yt-dlp"
 SPOTDL_LOCK = threading.Lock()
@@ -991,6 +1082,7 @@ def import_spotdl_mp3_file(
     dest_path = UPLOADS_DIR / unique_filename
 
     shutil.move(str(mp3_path), str(dest_path))
+    trim_track_silence_file(dest_path)
     duration, peaks = compute_audio_info_and_peaks(dest_path)
     auto_vol = compute_auto_gain_volume(dest_path)
 
@@ -1724,6 +1816,9 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             # teils keine HttpOnly-Cookies mit; daher Media-Streams direkt per Dateiname ausliefern.
             filename = urllib.parse.unquote(path[len("/media/") :])
             return self.serve_media_with_range(filename)
+        if path.startswith("/sfx/"):
+            filename = urllib.parse.unquote(path[len("/sfx/") :])
+            return self.serve_sfx_with_range(filename)
 
         public_icon_paths = {
             "/icon.svg",
@@ -1776,14 +1871,15 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(data)
 
-    def serve_media_with_range(self, filename: str):
+    def serve_media_with_range(self, filename: str, base_dir: Path | None = None):
         """
         Liefert Audio-Dateien inkl. HTTP Range Support (206 Partial Content) aus.
         Das ist essenziell, damit iPad/iPhone (Safari) und Chrome sofort an beliebige
         Sekunden-Positionen (Highlights/Cue-Points) springen können.
         """
         safe_name = os.path.basename(filename)
-        file_path = UPLOADS_DIR / safe_name
+        target_dir = base_dir if base_dir is not None else UPLOADS_DIR
+        file_path = target_dir / safe_name
         if not file_path.is_file():
             self.send_error(404, "Audio-Datei nicht gefunden")
             return
@@ -1845,6 +1941,9 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                 shutil.copyfileobj(f, self.wfile)
             except (BrokenPipeError, ConnectionResetError):
                 pass
+
+    def serve_sfx_with_range(self, filename: str):
+        return self.serve_media_with_range(filename, base_dir=DATA_DIR / "sfx")
 
     def handle_get_state(self):
         conn = get_db()
@@ -1972,9 +2071,16 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/tracks/normalize-all":
             return self.handle_normalize_all_tracks()
 
+        if path == "/api/tracks/trim-silence-all":
+            return self.handle_trim_silence_all_tracks()
+
         m_autogain = re.match(r"^/api/tracks/(\d+)/auto-gain$", path)
         if m_autogain:
             return self.handle_auto_gain_track(int(m_autogain.group(1)))
+
+        m_trimsilence = re.match(r"^/api/tracks/(\d+)/trim-silence$", path)
+        if m_trimsilence:
+            return self.handle_trim_silence_track(int(m_trimsilence.group(1)))
 
         m_autocues = re.match(r"^/api/tracks/(\d+)/auto-cues$", path)
         if m_autocues:
@@ -2096,6 +2202,7 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             dest_path = UPLOADS_DIR / unique_filename
 
             dest_path.write_bytes(file_bytes)
+            trim_track_silence_file(dest_path)
 
             # Titel und optional Interpret aus Dateinamen erraten ("Artist - Title")
             artist = ""
@@ -2309,6 +2416,94 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             PLAYER_ENGINE.refresh_track_metadata(tracks)
 
         self.send_json({"ok": True, "normalized_count": normalized_count})
+
+    def _apply_trim_silence_to_track_row(self, conn, track_id: int, filename: str) -> tuple[bool, float, float]:
+        filepath = UPLOADS_DIR / os.path.basename(filename)
+        if not filepath.is_file():
+            return False, 0.0, 0.0
+        trimmed, rem_start, rem_end = trim_track_silence_file(filepath)
+        if not trimmed:
+            return False, 0.0, 0.0
+
+        duration, peaks = compute_audio_info_and_peaks(filepath)
+        conn.execute(
+            "UPDATE tracks SET duration = ?, peaks_json = ? WHERE id = ?",
+            (duration, json.dumps(peaks), track_id),
+        )
+        if rem_start > 0.0:
+            cues = conn.execute(
+                "SELECT id, start_time, end_time FROM cues WHERE track_id = ?",
+                (track_id,),
+            ).fetchall()
+            for c in cues:
+                new_st = round(max(0.0, min(duration, float(c["start_time"]) - rem_start)), 2)
+                new_et = (
+                    round(max(new_st + 0.2, min(duration, float(c["end_time"]) - rem_start)), 2)
+                    if c["end_time"] is not None
+                    else None
+                )
+                conn.execute(
+                    "UPDATE cues SET start_time = ?, end_time = ? WHERE id = ?",
+                    (new_st, new_et, c["id"]),
+                )
+        return True, rem_start, rem_end
+
+    def handle_trim_silence_track(self, track_id: int):
+        conn = get_db()
+        row = conn.execute(
+            "SELECT id, filename, duration FROM tracks WHERE id = ?", (track_id,)
+        ).fetchone()
+        if not row:
+            conn.close()
+            return self.send_json({"error": "Lied nicht gefunden"}, 404)
+
+        trimmed, rem_start, rem_end = self._apply_trim_silence_to_track_row(
+            conn, track_id, row["filename"]
+        )
+        conn.commit()
+        updated = conn.execute("SELECT duration FROM tracks WHERE id = ?", (track_id,)).fetchone()
+        conn.close()
+
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+
+        self.send_json(
+            {
+                "ok": True,
+                "trimmed": trimmed,
+                "removed_start": rem_start,
+                "removed_end": rem_end,
+                "duration": float(updated["duration"]) if updated else 0.0,
+            }
+        )
+
+    def handle_trim_silence_all_tracks(self):
+        conn = get_db()
+        rows = conn.execute("SELECT id, filename FROM tracks").fetchall()
+        trimmed_count = 0
+        total_removed = 0.0
+        for r in rows:
+            trimmed, rem_start, rem_end = self._apply_trim_silence_to_track_row(
+                conn, r["id"], r["filename"]
+            )
+            if trimmed:
+                trimmed_count += 1
+                total_removed += rem_start + rem_end
+        conn.commit()
+        conn.close()
+
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+
+        self.send_json(
+            {
+                "ok": True,
+                "trimmed_count": trimmed_count,
+                "total_removed_sec": round(total_removed, 1),
+            }
+        )
 
     def handle_auto_detect_cues(self, track_id: int):
         conn = get_db()
@@ -2638,6 +2833,12 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                 )
                 conn.commit()
                 conn.close()
+        elif action == "trigger_sfx":
+            sfx_id = str(data.get("sfx_id") or "")
+            duck_music = bool(data.get("duck_music", True))
+            PLAYER_ENGINE.trigger_sfx(sfx_id, duck_music=duck_music)
+        elif action == "stop_sfx":
+            PLAYER_ENGINE.stop_sfx()
         else:
             return self.send_json({"error": f"Unbekannte Aktion: {action}"}, 400)
 

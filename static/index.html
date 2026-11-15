@@ -12,7 +12,7 @@
   <link rel="alternate icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="stylesheet" href="/styles.css?v=20261115b" />
+  <link rel="stylesheet" href="/styles.css?v=20261115c" />
 </head>
 <body>
   <!-- RESUME BANNER FÜR LOKALEN GERÄTE-TON NACH ERZWUNGENEM SEITEN-RELOAD (iOS SAFARI) -->
@@ -246,6 +246,16 @@
 
           <button
             type="button"
+            class="btn-sfx-toggle active"
+            id="sfxBarToggleBtn"
+            data-i18n-title="sfx_toggle_btn_title"
+            title="Schnell-Jingles / Sofort-Soundeffekte ein- oder ausblenden"
+          >
+            🚨 <span data-i18n="sfx_toggle_btn">Jingles</span>
+          </button>
+
+          <button
+            type="button"
             class="btn-bulk-pill"
             id="bulkSelectToggleBtn"
             data-i18n-title="bulk_mode_btn_title"
@@ -281,6 +291,42 @@
           </button>
           <button type="button" class="btn btn-secondary btn-bulk-sm" id="bulkExitBtn" data-i18n="bulk_done_btn">
             ✕ Fertig
+          </button>
+        </div>
+      </div>
+
+      <!-- SCHNELL-JINGLES / SOFORT-SOUNDEFFEKTE LEISTE (OVERLAY-MIX ÜBER LAUFENDER MUSIK) -->
+      <div class="sfx-quick-bar" id="sfxQuickBar">
+        <div class="sfx-pads-row">
+          <button type="button" class="sfx-pad-btn sfx-pad-horn" data-sfx-id="airhorn" data-i18n-title="sfx_tip_airhorn" title="Stadion-Airhorn (über laufender Musik abspielen)">
+            <span class="sfx-pad-icon">📣</span>
+            <span class="sfx-pad-label" data-i18n="sfx_airhorn">Airhorn</span>
+          </button>
+          <button type="button" class="sfx-pad-btn sfx-pad-buzzer" data-sfx-id="buzzer" data-i18n-title="sfx_tip_buzzer" title="Hallen-Sirene / Buzzer">
+            <span class="sfx-pad-icon">🚨</span>
+            <span class="sfx-pad-label" data-i18n="sfx_buzzer">Sirene</span>
+          </button>
+          <button type="button" class="sfx-pad-btn sfx-pad-drum" data-sfx-id="drumroll" data-i18n-title="sfx_tip_drumroll" title="Spannungs-Trommelwirbel mit Becken-Crash">
+            <span class="sfx-pad-icon">🥁</span>
+            <span class="sfx-pad-label" data-i18n="sfx_drumroll">Wirbel</span>
+          </button>
+          <button type="button" class="sfx-pad-btn sfx-pad-fanfare" data-sfx-id="fanfare" data-i18n-title="sfx_tip_fanfare" title="Sieger-Fanfare">
+            <span class="sfx-pad-icon">🎺</span>
+            <span class="sfx-pad-label" data-i18n="sfx_fanfare">Fanfare</span>
+          </button>
+          <button type="button" class="sfx-pad-btn sfx-pad-applause" data-sfx-id="applause" data-i18n-title="sfx_tip_applause" title="Jubel &amp; Applaus">
+            <span class="sfx-pad-icon">👏</span>
+            <span class="sfx-pad-label" data-i18n="sfx_applause">Applaus</span>
+          </button>
+          <button type="button" class="sfx-pad-btn sfx-pad-countdown" data-sfx-id="countdown" data-i18n-title="sfx_tip_countdown" title="3 - 2 - 1 - GO! Startsignal">
+            <span class="sfx-pad-icon">⏱️</span>
+            <span class="sfx-pad-label" data-i18n="sfx_countdown">3-2-1-GO</span>
+          </button>
+          <button type="button" class="sfx-duck-pill active" id="sfxDuckToggleBtn" data-i18n-title="sfx_duck_title" title="Musik während Jingle automatisch leicht absenken (Overlay-Ducking)">
+            🔉 <span data-i18n="sfx_duck_btn">Duck</span>
+          </button>
+          <button type="button" class="sfx-stop-pill hidden" id="sfxStopBtn" data-i18n-title="sfx_stop_title" title="Laufenden Jingle sofort stoppen">
+            ⏹
           </button>
         </div>
       </div>
@@ -693,6 +739,16 @@
               >
                 ✨ Drops / Refrains automatisch finden
               </button>
+              <button
+                type="button"
+                class="btn btn-secondary btn-trim-silence"
+                id="trimSilenceTrackBtn"
+                data-i18n="editor_trim_silence_btn"
+                data-i18n-title="editor_trim_silence_title"
+                title="Schneidet Totstille am Anfang und Ende verlustfrei ab, damit das Lied sofort auf den Punkt startet"
+              >
+                ✂️ Stille entfernen
+              </button>
             </div>
           </div>
 
@@ -958,6 +1014,9 @@
             <button type="button" class="btn btn-secondary" id="normalizeAllTracksBtn" data-i18n="normalize_all_btn">
               🔊 Alle vorhandenen Lieder jetzt automatisch einpegeln
             </button>
+            <button type="button" class="btn btn-secondary" id="trimAllTracksSilenceBtn" data-i18n="trim_all_btn">
+              ✂️ Stille am Anfang/Ende bei allen Liedern entfernen
+            </button>
             <span class="autogain-status-msg hidden" id="normalizeAllStatusMsg"></span>
           </div>
         </div>
@@ -1040,7 +1099,7 @@
     </div>
   </div>
 
-  <script src="/i18n.js?v=20261115b"></script>
-  <script src="/app.js?v=20261115b"></script>
+  <script src="/i18n.js?v=20261115c"></script>
+  <script src="/app.js?v=20261115c"></script>
 </body>
 </html>
