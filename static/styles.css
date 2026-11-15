@@ -2875,6 +2875,268 @@ body[data-theme="studio"] .quick-vol-btn.active {
   margin: 0;
 }
 
+/* ==========================================================================
+   SPEKTRUMANALYZER & 5-BAND EQUALIZER (EIN-/AUSBLENDBAR IM DECK)
+   ========================================================================== */
+.btn-deck-viz-pill {
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(15, 23, 42, 0.75);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-deck-viz-pill:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--text-main);
+}
+
+.btn-deck-viz-pill.active {
+  background: rgba(14, 165, 233, 0.18);
+  border-color: #38bdf8;
+  color: #e0f2fe;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+}
+
+.spectrum-panel,
+.eq-panel {
+  background: rgba(9, 13, 22, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  padding: 9px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.spectrum-header,
+.eq-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.spectrum-title,
+.eq-title {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  text-transform: uppercase;
+}
+
+.spectrum-actions,
+.eq-header-left,
+.eq-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-spec-mode,
+.btn-eq-reset,
+.btn-eq-power {
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(30, 41, 59, 0.75);
+  color: #cbd5e1;
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.btn-spec-mode:hover,
+.btn-eq-reset:hover {
+  border-color: #38bdf8;
+  color: #ffffff;
+}
+
+.btn-eq-power.active {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: #10b981;
+  color: #6ee7b7;
+}
+
+.btn-eq-power:not(.active) {
+  background: rgba(100, 116, 139, 0.2);
+  border-color: rgba(148, 163, 184, 0.3);
+  color: #94a3b8;
+}
+
+.btn-viz-hide {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(15, 23, 42, 0.6);
+  color: #64748b;
+  font-size: 0.72rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.btn-viz-hide:hover {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.spectrum-canvas-wrap {
+  background: #060911;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 6px 6px 3px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+#spectrumCanvas {
+  width: 100%;
+  height: 74px;
+  display: block;
+}
+
+.spectrum-freq-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 2px 0;
+  user-select: none;
+}
+
+.eq-preset-select {
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 138px;
+}
+
+.eq-bands-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  padding: 6px 4px 2px;
+  background: #060911;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+}
+
+.eq-panel.is-bypassed .eq-bands-grid {
+  opacity: 0.45;
+}
+
+.eq-band-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.eq-db-val {
+  font-size: 0.66rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #38bdf8;
+  line-height: 1.1;
+}
+
+.eq-slider-wrap {
+  width: 30px;
+  height: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+/* 0-dB Mittellinie hinter den Reglern */
+.eq-slider-wrap::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 50%;
+  height: 1px;
+  background: rgba(148, 163, 184, 0.25);
+  pointer-events: none;
+}
+
+.eq-slider {
+  width: 82px;
+  height: 24px;
+  margin: 0;
+  transform: rotate(-90deg);
+  cursor: pointer;
+  accent-color: #38bdf8;
+  background: transparent;
+}
+
+.eq-freq-btn {
+  border: none;
+  background: rgba(30, 41, 59, 0.65);
+  color: #cbd5e1;
+  font-size: 0.66rem;
+  font-weight: 800;
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.eq-freq-btn:hover {
+  background: rgba(56, 189, 248, 0.2);
+  color: #ffffff;
+}
+
+.eq-band-sub {
+  font-size: 0.58rem;
+  color: #64748b;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+body[data-theme="studio"] .spectrum-panel,
+body[data-theme="studio"] .eq-panel {
+  background: #10131a;
+  border-color: #222734;
+}
+
+body[data-theme="studio"] .spectrum-canvas-wrap,
+body[data-theme="studio"] .eq-bands-grid {
+  background: #0a0c10;
+  border-color: #1b202b;
+}
+
+
 
 
 

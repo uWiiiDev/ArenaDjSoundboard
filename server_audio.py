@@ -211,6 +211,35 @@ class ServerAudioEngine:
         self.shuffle_history: list[int] = []
         self.planned_next_track_id: int | None = None
 
+        # 5-Band Equalizer (60Hz, 250Hz, 1kHz, 4kHz, 12kHz) & 24-Band Live-Spektrumanalyzer
+        self.eq_enabled: bool = True
+        self.eq_preset: str = "flat"
+        self.eq_freqs = np.array([60.0, 250.0, 1000.0, 4000.0, 12000.0], dtype=np.float32)
+        self.eq_gains_db: list[float] = [0.0, 0.0, 0.0, 0.0, 0.0]
+        self._eq_pad = 128
+        self._eq_fft_len = FRAMES_PER_CHUNK + 2 * self._eq_pad
+        self._eq_rfft_freqs = np.fft.rfftfreq(self._eq_fft_len, d=1.0 / SAMPLE_RATE)
+        self._eq_curve = np.ones(len(self._eq_rfft_freqs), dtype=np.float32)
+        self._eq_hist = np.zeros((self._eq_pad, CHANNELS), dtype=np.float32)
+        self._update_eq_curve_locked()
+
+        # 24 logarithmische Bänder (32 Hz .. 16 kHz) für den Live-Spektrumanalyzer
+        self.num_spectrum_bands = 24
+        self.spectrum_bands: list[float] = [0.0] * self.num_spectrum_bands
+        self._spec_window = np.hanning(FRAMES_PER_CHUNK).astype(np.float32)
+        spec_freqs = np.fft.rfftfreq(FRAMES_PER_CHUNK, d=1.0 / SAMPLE_RATE)
+        edges = np.geomspace(32.0, 16000.0, self.num_spectrum_bands + 1)
+        self._spec_bin_slices: list[tuple[int, int, float]] = []
+        for b in range(self.num_spectrum_bands):
+            lo = int(np.searchsorted(spec_freqs, edges[b], side="left"))
+            hi = int(np.searchsorted(spec_freqs, edges[b + 1], side="right"))
+            lo = max(1, min(lo, len(spec_freqs) - 1))
+            hi = max(lo + 1, min(hi, len(spec_freqs)))
+            # Leichte Höhen-Gewichtung (+2.2 dB/Oktave ab 250 Hz), damit Höhen optisch ausgewogen tanzen
+            center_f = math.sqrt(float(edges[b] * edges[b + 1]))
+            tilt = max(0.85, (center_f / 220.0) ** 0.28)
+            self._spec_bin_slices.append((lo, hi, float(tilt)))
+
         self.output_proc: subprocess.Popen | None = None
         self.audio_available = bool(
             shutil.which("ffmpeg")
@@ -221,6 +250,33 @@ class ServerAudioEngine:
         self._thread = threading.Thread(target=self._mixer_loop, daemon=True)
         self._thread.start()
 
+    def _update_eq_curve_locked(self):
+        if not self.eq_enabled or all(abs(g) < 0.05 for g in self.eq_gains_db):
+            self._eq_curve = np.ones(len(self._eq_rfft_freqs), dtype=np.float32)
+            return
+        log_f = np.log10(np.maximum(self._eq_rfft_freqs, 20.0))
+        log_eq = np.log10(self.eq_freqs)
+        gains = np.array([max(-12.0, min(12.0, float(g))) for g in self.eq_gains_db], dtype=np.float32)
+        interp_db = np.interp(log_f, log_eq, gains)
+        self._eq_curve = (10.0 ** (interp_db / 20.0)).astype(np.float32)
+
+    def set_equalizer(
+        self,
+        enabled: bool | None = None,
+        bands_db: list[float] | None = None,
+        preset: str | None = None,
+    ):
+        with self.lock:
+            if enabled is not None:
+                self.eq_enabled = bool(enabled)
+            if preset is not None:
+                self.eq_preset = str(preset)
+            if bands_db is not None and len(bands_db) >= 5:
+                self.eq_gains_db = [
+                    round(max(-12.0, min(12.0, float(x))), 1) for x in bands_db[:5]
+                ]
+            self._update_eq_curve_locked()
+
     def sync_settings(self, settings: dict[str, str]):
         with self.lock:
             self.master_volume = float(settings.get("master_volume", 0.85))
@@ -228,6 +284,18 @@ class ServerAudioEngine:
             if new_shuffle != self.shuffle_enabled:
                 self.shuffle_enabled = new_shuffle
                 self.planned_next_track_id = None
+            if "eq_enabled" in settings:
+                self.eq_enabled = settings.get("eq_enabled", "true") != "false"
+            if "eq_preset" in settings:
+                self.eq_preset = str(settings.get("eq_preset") or "flat")
+            if "eq_bands" in settings:
+                try:
+                    parts = [float(x.strip()) for x in str(settings.get("eq_bands", "")).split(",") if x.strip()]
+                    if len(parts) >= 5:
+                        self.eq_gains_db = [round(max(-12.0, min(12.0, x)), 1) for x in parts[:5]]
+                except Exception:
+                    pass
+            self._update_eq_curve_locked()
 
     def _open_output_sink(self) -> subprocess.Popen | None:
         if shutil.which("pw-play"):
@@ -613,7 +681,51 @@ class ServerAudioEngine:
                 "duration": round(active.duration, 2),
                 "effective_volume_pct": max(0, min(150, eff_pct)),
                 "master_volume": round(self.master_volume, 3),
+                "eq_enabled": self.eq_enabled,
+                "eq_preset": self.eq_preset,
+                "eq_bands": [round(float(g), 1) for g in self.eq_gains_db],
+                "spectrum": [round(float(s), 1) for s in self.spectrum_bands],
             }
+
+    def _apply_eq_and_spectrum_locked(self, mixed_flat: np.ndarray) -> np.ndarray:
+        stereo = mixed_flat.reshape((FRAMES_PER_CHUNK, CHANNELS))
+        pad = self._eq_pad
+
+        if self.eq_enabled and any(abs(g) >= 0.05 for g in self.eq_gains_db):
+            right_pad = 2.0 * stereo[-1:] - stereo[-2 : -pad - 2 : -1]
+            blk = np.vstack((self._eq_hist, stereo, right_pad))
+            self._eq_hist = stereo[-pad:].copy()
+            spec = np.fft.rfft(blk, axis=0)
+            spec *= self._eq_curve[:, None]
+            out_stereo = np.fft.irfft(spec, n=self._eq_fft_len, axis=0)[pad : pad + FRAMES_PER_CHUNK]
+        else:
+            self._eq_hist = stereo[-pad:].copy()
+            out_stereo = stereo
+
+        # 24-Band Live-Spektrumanalyzer berechnen (normierter Mono-Mix nach EQ)
+        mono = (out_stereo[:, 0] + out_stereo[:, 1]) * (0.5 / 32768.0)
+        fft_mag = np.abs(np.fft.rfft(mono * self._spec_window)) / (FRAMES_PER_CHUNK * 0.25)
+
+        for idx, (lo, hi, tilt) in enumerate(self._spec_bin_slices):
+            band_slice = fft_mag[lo:hi]
+            if len(band_slice) == 0:
+                raw_val = 0.0
+            else:
+                # Mischung aus Peak und RMS für lebendige, präzise Pegelausschläge
+                peak_v = float(np.max(band_slice))
+                rms_v = float(np.sqrt(np.mean(band_slice * band_slice)))
+                mag = (0.65 * peak_v + 0.35 * rms_v) * tilt
+                db = 20.0 * math.log10(max(mag, 1e-6))
+                # -54 dB .. -2 dB auf 0 .. 100 abbilden
+                raw_val = max(0.0, min(100.0, (db + 54.0) * (100.0 / 52.0)))
+
+            prev_val = self.spectrum_bands[idx]
+            if raw_val >= prev_val:
+                self.spectrum_bands[idx] = prev_val * 0.28 + raw_val * 0.72
+            else:
+                self.spectrum_bands[idx] = max(0.0, prev_val * 0.62 + raw_val * 0.38 - 1.2)
+
+        return out_stereo.reshape(-1)
 
     def _mixer_loop(self):
         while self._running:
@@ -623,6 +735,12 @@ class ServerAudioEngine:
                 any_active = any(not d.paused for d in self.decks)
                 if not any_active:
                     self._close_output_sink()
+                    self._eq_hist.fill(0.0)
+                    for i in range(self.num_spectrum_bands):
+                        if self.spectrum_bands[i] > 0.1:
+                            self.spectrum_bands[i] = max(0.0, self.spectrum_bands[i] * 0.55 - 2.0)
+                        else:
+                            self.spectrum_bands[i] = 0.0
                 else:
                     # Ducking Schritt
                     if self.duck_duration > 0.0:
@@ -655,6 +773,7 @@ class ServerAudioEngine:
 
                     bus_gain = max(0.0, min(1.5, self.master_volume * self.duck_multiplier))
                     mixed *= bus_gain
+                    mixed = self._apply_eq_and_spectrum_locked(mixed)
                     np.clip(mixed, -32768.0, 32767.0, out=mixed)
                     pcm_bytes = mixed.astype(np.int16).tobytes()
 

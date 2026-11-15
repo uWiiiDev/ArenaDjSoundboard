@@ -60,6 +60,18 @@ const state = {
   bulkSelectMode: false,
   selectedTrackIds: new Set(),
 
+  // Spektrumanalyzer & 5-Band Equalizer State
+  showSpectrum: localStorage.getItem("arena_dj_show_spectrum") !== "false",
+  showEq: localStorage.getItem("arena_dj_show_eq") === "true",
+  spectrumStyle: localStorage.getItem("arena_dj_spectrum_style") || "led", // "led" | "bars" | "curve"
+  eqEnabled: true,
+  eqPreset: "flat",
+  eqBands: [0, 0, 0, 0, 0], // 60Hz, 250Hz, 1kHz, 4kHz, 12kHz (-12 .. +12 dB)
+  isDraggingEq: false,
+  serverSpectrum: new Array(24).fill(0),
+  displaySpectrum: new Array(24).fill(0),
+  peakHoldSpectrum: new Array(24).fill(0),
+
   // Live Player State
   currentTrack: null,
   currentCue: null,
@@ -215,6 +227,348 @@ function animateDeckGain(deck, fromVal, toVal, durationSec, curveType = "linear"
 }
 
 // ============================================================================
+// 5-BAND EQUALIZER & 24-BAND LIVE SPEKTRUMANALYZER (EIN-/AUSBLENDBAR)
+// ============================================================================
+const EQ_PRESETS = {
+  flat: [0, 0, 0, 0, 0],
+  arena_bass: [5.5, 2.5, 0.0, 1.5, 3.0],
+  punch: [6.0, 1.5, -1.5, 3.5, 4.5],
+  voice: [-6.0, -2.5, 3.5, 5.0, 2.0],
+  warm: [4.0, 3.0, 0.5, -1.5, 1.0],
+  brilliant: [1.5, 0.0, 1.0, 4.0, 6.5],
+};
+
+function formatEqDb(val) {
+  const num = Math.round(Number(val || 0) * 2) / 2;
+  if (Math.abs(num) < 0.05) return "0 dB";
+  const str = Number.isInteger(num) ? String(num) : num.toFixed(1);
+  return num > 0 ? `+${str} dB` : `${str} dB`;
+}
+
+function syncVizAndEqUI() {
+  const specPanel = document.getElementById("spectrumPanel");
+  const eqPanel = document.getElementById("eqPanel");
+  const btnSpec = document.getElementById("toggleSpectrumBtn");
+  const btnEq = document.getElementById("toggleEqBtn");
+  const btnStyle = document.getElementById("spectrumStyleBtn");
+  const btnEqEnable = document.getElementById("eqEnableBtn");
+  const presetSel = document.getElementById("eqPresetSelect");
+
+  if (specPanel) specPanel.classList.toggle("hidden", !state.showSpectrum);
+  if (eqPanel) {
+    eqPanel.classList.toggle("hidden", !state.showEq);
+    eqPanel.classList.toggle("is-bypassed", !state.eqEnabled);
+  }
+  if (btnSpec) btnSpec.classList.toggle("active", state.showSpectrum);
+  if (btnEq) btnEq.classList.toggle("active", state.showEq);
+
+  if (btnStyle) {
+    const styleKey =
+      state.spectrumStyle === "bars"
+        ? "spec_mode_bars"
+        : state.spectrumStyle === "curve"
+        ? "spec_mode_curve"
+        : "spec_mode_led";
+    btnStyle.textContent = t(styleKey);
+  }
+
+  if (btnEqEnable) {
+    btnEqEnable.classList.toggle("active", state.eqEnabled);
+    btnEqEnable.textContent = state.eqEnabled ? t("eq_on") : t("eq_bypass");
+  }
+
+  if (presetSel && presetSel.value !== state.eqPreset) {
+    presetSel.value = state.eqPreset || "custom";
+  }
+
+  for (let i = 0; i < 5; i++) {
+    const val = Number(state.eqBands[i] || 0);
+    const slider = document.getElementById(`eqBand${i}`);
+    const label = document.getElementById(`eqVal${i}`);
+    if (slider && !state.isDraggingEq) {
+      slider.value = String(val);
+    }
+    if (label) {
+      label.textContent = formatEqDb(val);
+      label.style.color = Math.abs(val) > 0.1 ? (val > 0 ? "#38bdf8" : "#f59e0b") : "#64748b";
+    }
+  }
+}
+
+function setSpectrumVisible(visible) {
+  state.showSpectrum = Boolean(visible);
+  localStorage.setItem("arena_dj_show_spectrum", String(state.showSpectrum));
+  syncVizAndEqUI();
+}
+
+function setEqVisible(visible) {
+  state.showEq = Boolean(visible);
+  localStorage.setItem("arena_dj_show_eq", String(state.showEq));
+  syncVizAndEqUI();
+}
+
+function cycleSpectrumStyle() {
+  const order = ["led", "bars", "curve"];
+  const idx = order.indexOf(state.spectrumStyle);
+  state.spectrumStyle = order[(idx + 1) % order.length];
+  localStorage.setItem("arena_dj_spectrum_style", state.spectrumStyle);
+  syncVizAndEqUI();
+}
+
+let _eqPushTimer = null;
+function pushEqToServer(persist = true) {
+  if (_eqPushTimer) clearTimeout(_eqPushTimer);
+  _eqPushTimer = setTimeout(() => {
+    fetch("/api/player/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "eq",
+        eq_enabled: state.eqEnabled,
+        eq_preset: state.eqPreset,
+        eq_bands: state.eqBands,
+        persist,
+      }),
+    }).catch(() => {});
+  }, persist ? 40 : 80);
+}
+
+function applyEqPreset(presetName) {
+  if (EQ_PRESETS[presetName]) {
+    state.eqPreset = presetName;
+    state.eqBands = [...EQ_PRESETS[presetName]];
+  } else {
+    state.eqPreset = "custom";
+  }
+  syncVizAndEqUI();
+  pushEqToServer(true);
+}
+
+function getEqGainAtBandIndex(bandIdx24) {
+  if (!state.eqEnabled) return 1.0;
+  // 24 Spektrum-Bänder auf die 5 EQ-Bänder (0..4) interpolieren
+  const pos = (bandIdx24 / 23) * 4;
+  const i0 = Math.max(0, Math.min(3, Math.floor(pos)));
+  const frac = pos - i0;
+  const db = (1 - frac) * (state.eqBands[i0] || 0) + frac * (state.eqBands[i0 + 1] || 0);
+  return Math.pow(10, db / 28);
+}
+
+function stepAndDrawSpectrumAnalyzer(nowMs) {
+  if (!state.showSpectrum) return;
+  const canvas = document.getElementById("spectrumCanvas");
+  if (!canvas) return;
+
+  const numBands = 24;
+  const isPlayingNow = state.isPlaying && Boolean(state.currentTrack);
+
+  for (let i = 0; i < numBands; i++) {
+    let targetVal = 0;
+
+    if (isPlayingNow) {
+      if (isServerMode() && Array.isArray(state.serverSpectrum) && state.serverSpectrum.length >= numBands) {
+        const baseSrv = Number(state.serverSpectrum[i] || 0);
+        // Sanfte Mikro-Bewegung zwischen den 250ms Server-Polls für flüssige 60 FPS
+        const flutter =
+          baseSrv > 3
+            ? Math.sin(nowMs * 0.014 + i * 0.85) * 2.8 + Math.cos(nowMs * 0.023 - i * 0.5) * 1.8
+            : 0;
+        targetVal = Math.max(0, Math.min(100, baseSrv + flutter));
+      } else {
+        // Lokaler Geräte-Ton: Reaktives 24-Band-Spektrum aus der echten Song-Hüllkurve (track.peaks) + EQ-Kurve
+        const activeAudio = getActiveAudio();
+        const cur = activeAudio.currentTime || 0;
+        const dur = activeAudio.duration || (state.currentTrack && state.currentTrack.duration) || 1;
+        const peaks =
+          state.currentTrack && Array.isArray(state.currentTrack.peaks) && state.currentTrack.peaks.length > 0
+            ? state.currentTrack.peaks
+            : null;
+        let env = 0.55;
+        if (peaks && dur > 0) {
+          const pIdx = Math.min(peaks.length - 1, Math.max(0, Math.floor((cur / dur) * peaks.length)));
+          env = Number(peaks[pIdx] || 0.45);
+        }
+        const deckGain = getActiveDeck().fadeGain * (getActiveDeck().trackVolume || 1.0);
+        const masterGain = state.settings.master_volume * state.duckMultiplier * deckGain;
+        // Typische Musik-Spektralverteilung + harmonische Beat-Modulation
+        const freqShape = 1.05 - 0.35 * Math.pow(i / (numBands - 1), 0.75);
+        const harmonic =
+          0.72 +
+          0.18 * Math.sin(cur * 11.5 + i * 0.62) +
+          0.14 * Math.cos(cur * 19.3 - i * 1.15);
+        const eqMult = getEqGainAtBandIndex(i);
+        targetVal = Math.max(0, Math.min(100, env * freqShape * harmonic * eqMult * masterGain * 105));
+      }
+    }
+
+    const prev = state.displaySpectrum[i] || 0;
+    if (targetVal >= prev) {
+      state.displaySpectrum[i] = prev * 0.45 + targetVal * 0.55;
+    } else {
+      state.displaySpectrum[i] = Math.max(0, prev * 0.86 + targetVal * 0.14 - 0.35);
+    }
+
+    // Peak-Hold mit sanftem Fall
+    if (state.displaySpectrum[i] >= (state.peakHoldSpectrum[i] || 0)) {
+      state.peakHoldSpectrum[i] = state.displaySpectrum[i];
+    } else {
+      state.peakHoldSpectrum[i] = Math.max(0, (state.peakHoldSpectrum[i] || 0) - 0.45);
+    }
+  }
+
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const isStudio = getTheme() === "studio";
+
+  // Dezente Hintergrund-Pegellinien (-6dB, -12dB, -24dB)
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.08)";
+  ctx.lineWidth = 1;
+  [0.25, 0.5, 0.75].forEach((ratio) => {
+    const gy = Math.round(h * ratio) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(0, gy);
+    ctx.lineTo(w, gy);
+    ctx.stroke();
+  });
+
+  const padX = 4;
+  const usableW = w - padX * 2;
+  const stepW = usableW / numBands;
+  const barW = Math.max(4, stepW - 3);
+
+  if (state.spectrumStyle === "curve") {
+    // 1. Gefüllte Neon-Frequenzkurve (RTA)
+    const grad = ctx.createLinearGradient(0, h, 0, 0);
+    if (isStudio) {
+      grad.addColorStop(0, "rgba(14, 165, 233, 0.06)");
+      grad.addColorStop(0.65, "rgba(56, 189, 248, 0.32)");
+      grad.addColorStop(1, "rgba(245, 158, 11, 0.52)");
+    } else {
+      grad.addColorStop(0, "rgba(34, 197, 94, 0.08)");
+      grad.addColorStop(0.65, "rgba(56, 189, 248, 0.36)");
+      grad.addColorStop(1, "rgba(249, 115, 22, 0.58)");
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(padX, h);
+    for (let i = 0; i < numBands; i++) {
+      const cx = padX + i * stepW + stepW * 0.5;
+      const cy = h - (state.displaySpectrum[i] / 100) * (h - 6);
+      if (i === 0) {
+        ctx.lineTo(cx, cy);
+      } else {
+        const prevX = padX + (i - 1) * stepW + stepW * 0.5;
+        const prevY = h - (state.displaySpectrum[i - 1] / 100) * (h - 6);
+        const midX = (prevX + cx) * 0.5;
+        ctx.quadraticCurveTo(prevX, prevY, midX, (prevY + cy) * 0.5);
+        if (i === numBands - 1) {
+          ctx.lineTo(cx, cy);
+        }
+      }
+    }
+    ctx.lineTo(w - padX, h);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Leuchtende Kurven-Kontur
+    ctx.beginPath();
+    for (let i = 0; i < numBands; i++) {
+      const cx = padX + i * stepW + stepW * 0.5;
+      const cy = h - (state.displaySpectrum[i] / 100) * (h - 6);
+      if (i === 0) ctx.moveTo(cx, cy);
+      else ctx.lineTo(cx, cy);
+    }
+    ctx.strokeStyle = isStudio ? "#38bdf8" : "#22c55e";
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+  } else if (state.spectrumStyle === "bars") {
+    // 2. Durchgehende Studio-Gradient-Balken + Peak-Hold
+    const grad = ctx.createLinearGradient(0, h, 0, 0);
+    if (isStudio) {
+      grad.addColorStop(0, "#0284c7");
+      grad.addColorStop(0.65, "#38bdf8");
+      grad.addColorStop(0.88, "#f59e0b");
+      grad.addColorStop(1, "#ef4444");
+    } else {
+      grad.addColorStop(0, "#16a34a");
+      grad.addColorStop(0.65, "#22c55e");
+      grad.addColorStop(0.86, "#f59e0b");
+      grad.addColorStop(1, "#ef4444");
+    }
+
+    for (let i = 0; i < numBands; i++) {
+      const x = padX + i * stepW + (stepW - barW) * 0.5;
+      const val = state.displaySpectrum[i];
+      const barH = Math.max(2, (val / 100) * (h - 6));
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, h - barH, barW, barH);
+
+      // Peak-Hold Kappe
+      const peakVal = state.peakHoldSpectrum[i];
+      if (peakVal > 2) {
+        const py = Math.max(1, h - (peakVal / 100) * (h - 6) - 2);
+        ctx.fillStyle = peakVal > 85 ? "#ef4444" : "#e2e8f0";
+        ctx.fillRect(x, py, barW, 2);
+      }
+    }
+  } else {
+    // 3. Klassischer segmentierter DJ-LED-Spektrumanalyzer (Standard)
+    const numSegs = 14;
+    const segGap = 1.5;
+    const segH = (h - 4 - (numSegs - 1) * segGap) / numSegs;
+
+    for (let i = 0; i < numBands; i++) {
+      const x = padX + i * stepW + (stepW - barW) * 0.5;
+      const activeSegs = Math.round((state.displaySpectrum[i] / 100) * numSegs);
+      const peakSeg = Math.min(numSegs - 1, Math.floor((state.peakHoldSpectrum[i] / 100) * numSegs));
+
+      for (let s = 0; s < numSegs; s++) {
+        const sy = h - 2 - (s + 1) * segH - s * segGap;
+        const isLit = s < activeSegs;
+        const isPeakCap = !isLit && s === peakSeg && state.peakHoldSpectrum[i] > 4;
+
+        if (!isLit && !isPeakCap) {
+          ctx.fillStyle = "rgba(30, 41, 59, 0.36)";
+          ctx.fillRect(x, sy, barW, segH);
+          continue;
+        }
+
+        if (s >= numSegs - 2) {
+          ctx.fillStyle = "#ef4444"; // Clip / Red Zone
+        } else if (s >= numSegs - 5) {
+          ctx.fillStyle = "#f59e0b"; // Amber / Headroom Zone
+        } else {
+          ctx.fillStyle = isStudio ? "#38bdf8" : "#22c55e"; // Nominal Zone
+        }
+        ctx.fillRect(x, sy, barW, segH);
+      }
+    }
+  }
+
+  // Wenn der 5-Band-Equalizer aktiv und nicht auf 0 dB ist: dezente EQ-Kurve im Spektrum einblenden
+  if (state.eqEnabled && state.eqBands.some((b) => Math.abs(b) > 0.1)) {
+    ctx.save();
+    ctx.beginPath();
+    for (let i = 0; i < 5; i++) {
+      const ex = padX + (i / 4) * (usableW - stepW) + stepW * 0.5;
+      const db = Math.max(-12, Math.min(12, Number(state.eqBands[i] || 0)));
+      const ey = h * 0.5 - (db / 12) * (h * 0.38);
+      if (i === 0) ctx.moveTo(ex, ey);
+      else ctx.lineTo(ex, ey);
+    }
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ============================================================================
 // SERVER-TON vs. LOKALER GERÄTE-TON & RELOAD-SCHUTZ
 // ============================================================================
 const LOCAL_SNAPSHOT_KEY = "arena_dj_local_playback_v1";
@@ -358,6 +712,32 @@ function applyServerPlayerStatus(ps) {
   state.serverCurrentTime = Number(ps.current_time || 0);
   state.serverEffectivePct = Number(ps.effective_volume_pct ?? 85);
   state.serverNextTrackId = ps.next_track_id ? Number(ps.next_track_id) : null;
+  if (Array.isArray(ps.spectrum) && ps.spectrum.length >= 24) {
+    state.serverSpectrum = ps.spectrum.slice(0, 24);
+  }
+  if (!state.isDraggingEq) {
+    let eqChanged = false;
+    if (typeof ps.eq_enabled === "boolean" && ps.eq_enabled !== state.eqEnabled) {
+      state.eqEnabled = ps.eq_enabled;
+      eqChanged = true;
+    }
+    if (typeof ps.eq_preset === "string" && ps.eq_preset !== state.eqPreset) {
+      state.eqPreset = ps.eq_preset;
+      eqChanged = true;
+    }
+    if (Array.isArray(ps.eq_bands) && ps.eq_bands.length >= 5) {
+      for (let i = 0; i < 5; i++) {
+        const v = Number(ps.eq_bands[i] || 0);
+        if (Math.abs(v - (state.eqBands[i] || 0)) > 0.05) {
+          state.eqBands[i] = v;
+          eqChanged = true;
+        }
+      }
+    }
+    if (eqChanged) {
+      syncVizAndEqUI();
+    }
+  }
   if (typeof ps.shuffle_enabled === "boolean" && ps.shuffle_enabled !== state.settings.shuffle_enabled) {
     state.settings.shuffle_enabled = ps.shuffle_enabled;
     syncControlsWithSettings();
@@ -1031,6 +1411,7 @@ function updateLiveLoop() {
       drawNowPlayingWaveform(cur, dur);
     }
   }
+  stepAndDrawSpectrumAnalyzer(performance.now());
   requestAnimationFrame(updateLiveLoop);
 }
 
@@ -1091,9 +1472,25 @@ async function loadStateFromServer() {
       state.settings.panel_order = data.settings.panel_order;
       localStorage.setItem("arena_dj_panel_order", data.settings.panel_order);
     }
+    if (data.settings.eq_enabled !== undefined) {
+      state.eqEnabled = data.settings.eq_enabled !== "false";
+    }
+    if (data.settings.eq_preset) {
+      state.eqPreset = String(data.settings.eq_preset);
+    }
+    if (data.settings.eq_bands) {
+      const parts = String(data.settings.eq_bands)
+        .split(",")
+        .map((s) => parseFloat(s.trim()))
+        .filter((n) => !isNaN(n));
+      if (parts.length >= 5) {
+        state.eqBands = parts.slice(0, 5);
+      }
+    }
   }
 
   applyPanelOrder();
+  syncVizAndEqUI();
 
   if (data.player_status && typeof data.player_status.audio_available === "boolean") {
     state.serverAudioAvailable = data.player_status.audio_available;
@@ -1205,6 +1602,7 @@ function syncControlsWithSettings() {
   if (!isServerMode()) {
     applyEffectiveVolume();
   }
+  syncVizAndEqUI();
 }
 
 async function setViewMode(mode) {
@@ -2294,6 +2692,93 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Transport-Steuerung & Endlosschleife im Live-Deck
   document.getElementById("btnPlayPause").addEventListener("click", togglePlayPause);
+
+  // Spektrumanalyzer & 5-Band Equalizer (ein-/ausblendbar im Deck)
+  syncVizAndEqUI();
+  const toggleSpectrumBtn = document.getElementById("toggleSpectrumBtn");
+  if (toggleSpectrumBtn) {
+    toggleSpectrumBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setSpectrumVisible(!state.showSpectrum);
+    });
+  }
+  const hideSpectrumBtn = document.getElementById("hideSpectrumBtn");
+  if (hideSpectrumBtn) {
+    hideSpectrumBtn.addEventListener("click", () => setSpectrumVisible(false));
+  }
+  const spectrumStyleBtn = document.getElementById("spectrumStyleBtn");
+  if (spectrumStyleBtn) {
+    spectrumStyleBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      cycleSpectrumStyle();
+    });
+  }
+  const spectrumCanvasWrap = document.getElementById("spectrumCanvasWrap");
+  if (spectrumCanvasWrap) {
+    spectrumCanvasWrap.addEventListener("click", () => cycleSpectrumStyle());
+  }
+
+  const toggleEqBtn = document.getElementById("toggleEqBtn");
+  if (toggleEqBtn) {
+    toggleEqBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setEqVisible(!state.showEq);
+    });
+  }
+  const hideEqBtn = document.getElementById("hideEqBtn");
+  if (hideEqBtn) {
+    hideEqBtn.addEventListener("click", () => setEqVisible(false));
+  }
+  const eqEnableBtn = document.getElementById("eqEnableBtn");
+  if (eqEnableBtn) {
+    eqEnableBtn.addEventListener("click", () => {
+      state.eqEnabled = !state.eqEnabled;
+      syncVizAndEqUI();
+      pushEqToServer(true);
+    });
+  }
+  const eqPresetSelect = document.getElementById("eqPresetSelect");
+  if (eqPresetSelect) {
+    eqPresetSelect.addEventListener("change", (e) => {
+      applyEqPreset(e.target.value);
+    });
+  }
+  const eqResetBtn = document.getElementById("eqResetBtn");
+  if (eqResetBtn) {
+    eqResetBtn.addEventListener("click", () => {
+      applyEqPreset("flat");
+    });
+  }
+  document.querySelectorAll(".eq-slider").forEach((slider) => {
+    const bandIdx = Number(slider.dataset.band || 0);
+    slider.addEventListener("pointerdown", () => {
+      state.isDraggingEq = true;
+    });
+    slider.addEventListener("input", () => {
+      state.eqBands[bandIdx] = parseFloat(slider.value || "0");
+      state.eqPreset = "custom";
+      syncVizAndEqUI();
+      pushEqToServer(false);
+    });
+    const finishEqDrag = () => {
+      if (!state.isDraggingEq) return;
+      state.isDraggingEq = false;
+      pushEqToServer(true);
+    };
+    slider.addEventListener("pointerup", finishEqDrag);
+    slider.addEventListener("pointercancel", finishEqDrag);
+    slider.addEventListener("change", finishEqDrag);
+  });
+  document.querySelectorAll(".eq-freq-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const bandIdx = Number(btn.dataset.resetBand || 0);
+      state.eqBands[bandIdx] = 0;
+      const isAllZero = state.eqBands.every((b) => Math.abs(b) < 0.05);
+      state.eqPreset = isAllZero ? "flat" : "custom";
+      syncVizAndEqUI();
+      pushEqToServer(true);
+    });
+  });
   document.getElementById("btnFadeOut").addEventListener("click", () => triggerSmoothFadeOut(false));
   document.getElementById("btnStopImmediate").addEventListener("click", stopImmediate);
   document.getElementById("btnTalkover").addEventListener("click", toggleTalkover);

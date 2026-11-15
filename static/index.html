@@ -12,7 +12,7 @@
   <link rel="alternate icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="stylesheet" href="/styles.css?v=20261114b" />
+  <link rel="stylesheet" href="/styles.css?v=20261115a" />
 </head>
 <body>
   <!-- RESUME BANNER FÜR LOKALEN GERÄTE-TON NACH ERZWUNGENEM SEITEN-RELOAD (iOS SAFARI) -->
@@ -404,7 +404,26 @@
           <span class="drag-grip">⠿</span>
           <span class="panel-title-text" data-i18n="panel_deck_title">💿 AKTUELLES LIED</span>
         </div>
-        <span class="drag-hint-pill" data-i18n="movable_pill">Verschiebbar</span>
+        <div class="panel-header-controls">
+          <button
+            type="button"
+            class="btn-deck-viz-pill active"
+            id="toggleSpectrumBtn"
+            data-i18n-title="toggle_spectrum_title"
+            title="Live-Spektrumanalyzer ein-/ausblenden"
+          >
+            📊 <span data-i18n="spectrum_btn_short">Spektrum</span>
+          </button>
+          <button
+            type="button"
+            class="btn-deck-viz-pill"
+            id="toggleEqBtn"
+            data-i18n-title="toggle_eq_title"
+            title="5-Band Equalizer ein-/ausblenden"
+          >
+            🎚️ <span data-i18n="eq_btn_short">EQ</span>
+          </button>
+        </div>
       </div>
 
       <div class="deck-card cockpit-card-inner">
@@ -434,6 +453,132 @@
             <span id="npCurrentTime">0:00.0</span>
             <span id="npRemainingTime">-0:00.0</span>
             <span id="npDuration">0:00</span>
+          </div>
+        </div>
+
+        <!-- AUSBLENDBARER 24-BAND LIVE-SPEKTRUMANALYZER -->
+        <div class="spectrum-panel" id="spectrumPanel">
+          <div class="spectrum-header">
+            <span class="spectrum-title" data-i18n="spectrum_panel_title">📊 SPEKTRUMANALYZER</span>
+            <div class="spectrum-actions">
+              <button
+                type="button"
+                class="btn-spec-mode"
+                id="spectrumStyleBtn"
+                data-i18n-title="spectrum_style_title"
+                title="Darstellung wechseln (LED / Balken / Kurve)"
+              >
+                LED
+              </button>
+              <button
+                type="button"
+                class="btn-viz-hide"
+                id="hideSpectrumBtn"
+                data-i18n-title="hide_panel_title"
+                title="Spektrumanalyzer ausblenden"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <div class="spectrum-canvas-wrap" id="spectrumCanvasWrap" title="Klicken zum Wechseln des Anzeigestils">
+            <canvas id="spectrumCanvas" width="500" height="82"></canvas>
+            <div class="spectrum-freq-row" aria-hidden="true">
+              <span>40Hz</span>
+              <span>125Hz</span>
+              <span>500Hz</span>
+              <span>2kHz</span>
+              <span>6kHz</span>
+              <span>16kHz</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- AUSBLENDBARER 5-BAND EQUALIZER -->
+        <div class="eq-panel hidden" id="eqPanel">
+          <div class="eq-header">
+            <div class="eq-header-left">
+              <span class="eq-title" data-i18n="eq_panel_title">🎚️ EQUALIZER</span>
+              <button type="button" class="btn-eq-power active" id="eqEnableBtn" title="Equalizer aktivieren / Bypass">
+                ON
+              </button>
+            </div>
+            <div class="eq-header-right">
+              <select id="eqPresetSelect" class="eq-preset-select" aria-label="Equalizer Preset">
+                <option value="flat" data-i18n="eq_preset_flat">Linear (0 dB)</option>
+                <option value="arena_bass" data-i18n="eq_preset_bass">🏟️ Arena Bass</option>
+                <option value="punch" data-i18n="eq_preset_punch">🥊 Wettkampf Punch</option>
+                <option value="voice" data-i18n="eq_preset_voice">🎤 Sprache / Klar</option>
+                <option value="warm" data-i18n="eq_preset_warm">🔥 Warm & Voll</option>
+                <option value="brilliant" data-i18n="eq_preset_brilliant">✨ Höhen-Brillanz</option>
+                <option value="custom" data-i18n="eq_preset_custom">⚙️ Eigene Kurve</option>
+              </select>
+              <button
+                type="button"
+                class="btn-eq-reset"
+                id="eqResetBtn"
+                data-i18n-title="eq_reset_title"
+                title="Alle Bänder auf 0 dB zurücksetzen"
+              >
+                0 dB
+              </button>
+              <button
+                type="button"
+                class="btn-viz-hide"
+                id="hideEqBtn"
+                data-i18n-title="hide_panel_title"
+                title="Equalizer ausblenden"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <div class="eq-bands-grid" id="eqBandsGrid">
+            <div class="eq-band-col" data-band-idx="0">
+              <span class="eq-db-val" id="eqVal0">0 dB</span>
+              <div class="eq-slider-wrap">
+                <input type="range" class="eq-slider" id="eqBand0" data-band="0" min="-12" max="12" step="0.5" value="0" />
+              </div>
+              <button type="button" class="eq-freq-btn" data-reset-band="0" title="Tippen für 0 dB">60Hz</button>
+              <span class="eq-band-sub" data-i18n="eq_sub_0">Bass</span>
+            </div>
+
+            <div class="eq-band-col" data-band-idx="1">
+              <span class="eq-db-val" id="eqVal1">0 dB</span>
+              <div class="eq-slider-wrap">
+                <input type="range" class="eq-slider" id="eqBand1" data-band="1" min="-12" max="12" step="0.5" value="0" />
+              </div>
+              <button type="button" class="eq-freq-btn" data-reset-band="1" title="Tippen für 0 dB">250Hz</button>
+              <span class="eq-band-sub" data-i18n="eq_sub_1">Low-Mid</span>
+            </div>
+
+            <div class="eq-band-col" data-band-idx="2">
+              <span class="eq-db-val" id="eqVal2">0 dB</span>
+              <div class="eq-slider-wrap">
+                <input type="range" class="eq-slider" id="eqBand2" data-band="2" min="-12" max="12" step="0.5" value="0" />
+              </div>
+              <button type="button" class="eq-freq-btn" data-reset-band="2" title="Tippen für 0 dB">1kHz</button>
+              <span class="eq-band-sub" data-i18n="eq_sub_2">Mitten</span>
+            </div>
+
+            <div class="eq-band-col" data-band-idx="3">
+              <span class="eq-db-val" id="eqVal3">0 dB</span>
+              <div class="eq-slider-wrap">
+                <input type="range" class="eq-slider" id="eqBand3" data-band="3" min="-12" max="12" step="0.5" value="0" />
+              </div>
+              <button type="button" class="eq-freq-btn" data-reset-band="3" title="Tippen für 0 dB">4kHz</button>
+              <span class="eq-band-sub" data-i18n="eq_sub_3">Präsenz</span>
+            </div>
+
+            <div class="eq-band-col" data-band-idx="4">
+              <span class="eq-db-val" id="eqVal4">0 dB</span>
+              <div class="eq-slider-wrap">
+                <input type="range" class="eq-slider" id="eqBand4" data-band="4" min="-12" max="12" step="0.5" value="0" />
+              </div>
+              <button type="button" class="eq-freq-btn" data-reset-band="4" title="Tippen für 0 dB">12kHz</button>
+              <span class="eq-band-sub" data-i18n="eq_sub_4">Höhen</span>
+            </div>
           </div>
         </div>
 
@@ -842,7 +987,7 @@
     </div>
   </div>
 
-  <script src="/i18n.js?v=20261114b"></script>
-  <script src="/app.js?v=20261114b"></script>
+  <script src="/i18n.js?v=20261115a"></script>
+  <script src="/app.js?v=20261115a"></script>
 </body>
 </html>

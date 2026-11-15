@@ -2298,6 +2298,32 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                 )
                 conn.commit()
                 conn.close()
+        elif action == "eq":
+            eq_enabled = data.get("eq_enabled")
+            if not isinstance(eq_enabled, bool):
+                eq_enabled = None
+            raw_bands = data.get("eq_bands")
+            bands_list = None
+            if isinstance(raw_bands, list) and len(raw_bands) >= 5:
+                bands_list = [max(-12.0, min(12.0, float(x))) for x in raw_bands[:5]]
+            eq_preset = str(data.get("eq_preset") or "") or None
+            PLAYER_ENGINE.set_equalizer(eq_enabled, bands_list, eq_preset)
+            if data.get("persist", True):
+                conn = get_db()
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES ('eq_enabled', ?)",
+                    ("true" if PLAYER_ENGINE.eq_enabled else "false",),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES ('eq_preset', ?)",
+                    (PLAYER_ENGINE.eq_preset,),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES ('eq_bands', ?)",
+                    (",".join(f"{g:.1f}" for g in PLAYER_ENGINE.eq_gains_db),),
+                )
+                conn.commit()
+                conn.close()
         else:
             return self.send_json({"error": f"Unbekannte Aktion: {action}"}, 400)
 
