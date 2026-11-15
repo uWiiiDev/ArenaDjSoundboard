@@ -2708,6 +2708,12 @@ body[data-theme="studio"] .quick-vol-btn.active {
 .spotdl-bar-fill {
   background: linear-gradient(90deg, #16a34a, #4ade80);
   transition: width 0.25s ease;
+  animation: none;
+  transform: none;
+}
+
+.spotdl-bar-fill.is-running {
+  animation: progressIndeterminate 1.2s infinite ease-in-out;
 }
 
 .spotdl-imported-list {

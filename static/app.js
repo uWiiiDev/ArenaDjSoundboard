@@ -4533,14 +4533,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (barFill) {
+      barFill.classList.toggle("is-running", Boolean(job.running));
       let pct = 0;
-      if (total > 0) {
+      if (!job.running && (job.status === "done" || done > 0)) {
+        pct = 100;
+      } else if (total > 0) {
         pct = Math.min(100, Math.round((done / total) * 100));
         if (job.running && pct < 8) pct = 8;
       } else if (job.running) {
         pct = 30;
-      } else if (job.status === "done") {
-        pct = 100;
       }
       barFill.style.width = `${pct}%`;
     }
