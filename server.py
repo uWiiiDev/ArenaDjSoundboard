@@ -549,6 +549,201 @@ def compute_audio_info_and_peaks(filepath: Path, num_peaks: int = 180) -> tuple[
     return duration, peaks
 
 
+def compute_auto_gain_volume(filepath: Path) -> float:
+    """
+    Berechnet automatisch den optimalen Lautstärke-Faktor (Auto-Gain, 0.25 .. 1.50 in 0.05er Schritten)
+    anhand der aktiven RMS-Lautheit (Gated Loudness ähnlich EBU R128), damit unterschiedlich
+    gemasterte Lieder in der Halle gleich druckvoll klingen.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(filepath),
+                "-ac",
+                "1",
+                "-ar",
+                "2000",
+                "-f",
+                "s16le",
+                "-",
+            ],
+            capture_output=True,
+            timeout=20,
+        )
+        raw = proc.stdout
+        total_samples = len(raw) // 2
+        if total_samples < 400:
+            return 1.0
+
+        import numpy as np
+
+        arr = np.frombuffer(raw[: total_samples * 2], dtype=np.int16).astype(np.float32) / 32768.0
+        max_peak = float(np.max(np.abs(arr)))
+        if max_peak < 1e-4:
+            return 1.0
+
+        # 400ms Fenster (800 Samples bei 2000 Hz) für Gated RMS
+        win_len = 800
+        n_wins = total_samples // win_len
+        if n_wins < 2:
+            rms_val = float(np.sqrt(np.mean(arr * arr)))
+        else:
+            frames = arr[: n_wins * win_len].reshape((n_wins, win_len))
+            win_rms = np.sqrt(np.mean(frames * frames, axis=1))
+            # Stille/leise Passagen (< -42 dBFS) ausblenden
+            active = win_rms[win_rms > 0.008]
+            if len(active) == 0:
+                active = win_rms
+            # 75. Perzentil repräsentiert den energetischen Hauptteil (Refrain/Beat)
+            rms_val = float(np.percentile(active, 75))
+
+        # Arena-Referenzpegel (~ -13.1 dBFS aktiver RMS)
+        target_rms = 0.22
+        raw_gain = target_rms / max(rms_val, 0.025)
+        # Headroom-Schutz gegen starkes Clipping
+        max_safe_gain = 1.08 / max(max_peak, 0.15)
+        gain = min(raw_gain, max_safe_gain * 1.15)
+        gain = max(0.25, min(1.50, gain))
+        # Auf 5%-Schritte (0.05) runden
+        return round(round(gain * 20.0) / 20.0, 2)
+    except Exception as e:
+        print(f"Hinweis bei Auto-Gain-Analyse: {e}")
+        return 1.0
+
+
+def detect_track_auto_cues(filepath: Path, duration: float) -> list[dict]:
+    """
+    Analysiert die Energie-Hüllkurve des Liedes in 0.2s-Schritten und findet automatisch
+    bis zu 3 prägnante Wettkampf-Highlights:
+    1. 🥁 Beat-Start / Intro (erster druckvoller Einsatz)
+    2. 🔥 Drop / Refrain (stärkster Energie-Sprung nach einem Build-Up/Break)
+    3. 🚀 Höhepunkt / Main Part (zweiter markanter Drop oder energiereichster Abschnitt)
+    """
+    cues: list[dict] = []
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(filepath),
+                "-ac",
+                "1",
+                "-ar",
+                "2000",
+                "-f",
+                "s16le",
+                "-",
+            ],
+            capture_output=True,
+            timeout=20,
+        )
+        raw = proc.stdout
+        total_samples = len(raw) // 2
+        if total_samples < 800:
+            return [{"label": "▶ Beat-Start", "start_time": 0.0, "end_time": None, "color": "#38bdf8", "fade_in": True}]
+
+        import numpy as np
+
+        arr = np.frombuffer(raw[: total_samples * 2], dtype=np.int16).astype(np.float32) / 32768.0
+        # 0.20s Fenster (400 Samples bei 2000 Hz = 5 Schritte pro Sekunde)
+        hop = 400
+        dt = 0.20
+        n_frames = total_samples // hop
+        if n_frames < 10:
+            return [{"label": "▶ Beat-Start", "start_time": 0.0, "end_time": None, "color": "#38bdf8", "fade_in": True}]
+
+        frames = arr[: n_frames * hop].reshape((n_frames, hop))
+        rms = np.sqrt(np.mean(frames * frames, axis=1))
+        dur = duration if duration > 0 else n_frames * dt
+        p90 = float(np.percentile(rms, 90)) if len(rms) > 0 else 0.1
+        if p90 < 1e-4:
+            p90 = 0.1
+
+        min_gap_sec = max(5.0, min(14.0, dur * 0.14))
+
+        # 1. Beat-Start / Intro finden (erster Moment >= 30% der 90%-Energie in den ersten 25% des Liedes)
+        intro_limit = max(3, int(min(n_frames * 0.25, 25.0 / dt)))
+        beat_idx = 0
+        for i in range(intro_limit):
+            if rms[i] >= p90 * 0.30:
+                beat_idx = i
+                break
+        beat_sec = round(beat_idx * dt, 1)
+        if beat_sec < 0.8:
+            beat_sec = 0.0
+        cues.append(
+            {
+                "label": "🥁 Beat-Start",
+                "start_time": beat_sec,
+                "end_time": None,
+                "color": "#38bdf8",
+                "fade_in": beat_sec < 0.5,
+            }
+        )
+
+        # Novelty-Kurve (Energie-Anstieg: 3.0s nach t minus 2.2s vor t) für echte Drops / Refrains
+        pre_w = max(2, int(2.2 / dt))
+        post_w = max(3, int(3.0 / dt))
+        novelty = np.zeros(n_frames, dtype=np.float32)
+        for i in range(pre_w, n_frames - post_w):
+            pre_mean = float(np.mean(rms[i - pre_w : i]))
+            post_mean = float(np.mean(rms[i : i + post_w]))
+            if post_mean >= p90 * 0.52:
+                novelty[i] = (post_mean - 0.82 * pre_mean) * (post_mean / p90)
+
+        # 2. Stärkster Drop / Refrain
+        search_start = max(pre_w, int((beat_sec + min_gap_sec) / dt))
+        search_end = max(search_start + 1, int(n_frames * 0.86))
+        if search_end > search_start and search_end <= n_frames:
+            sub_nov = novelty[search_start:search_end]
+            if len(sub_nov) > 0 and float(np.max(sub_nov)) > 0:
+                drop1_idx = search_start + int(np.argmax(sub_nov))
+                drop1_sec = round(drop1_idx * dt, 1)
+                cues.append(
+                    {
+                        "label": "🔥 Drop / Refrain",
+                        "start_time": drop1_sec,
+                        "end_time": None,
+                        "color": "#f97316",
+                        "fade_in": False,
+                    }
+                )
+
+                # 3. Zweiter Drop / Höhepunkt (mindestens min_gap_sec Abstand zu Beat-Start & Drop 1)
+                if dur >= 18.0:
+                    best_idx = -1
+                    best_score = -1.0
+                    for i in range(pre_w, int(n_frames * 0.88)):
+                        t_sec = i * dt
+                        if all(abs(t_sec - c["start_time"]) >= min_gap_sec for c in cues):
+                            score = float(novelty[i]) + 0.25 * float(rms[i])
+                            if score > best_score and rms[i] >= p90 * 0.55:
+                                best_score = score
+                                best_idx = i
+                    if best_idx > 0:
+                        cues.append(
+                            {
+                                "label": "🚀 Höhepunkt",
+                                "start_time": round(best_idx * dt, 1),
+                                "end_time": None,
+                                "color": "#ef4444",
+                                "fade_in": False,
+                            }
+                        )
+
+        cues.sort(key=lambda x: x["start_time"])
+    except Exception as e:
+        print(f"Hinweis bei Auto-Cue-Erkennung: {e}")
+
+    return cues
+
+
 SPOTDL_VENV_DIR = Path.home() / ".local" / "share" / "arena-dj-soundboard" / "spotdl-venv"
 YTDLP_STANDALONE_PATH = Path.home() / ".local" / "share" / "arena-dj-soundboard" / "bin" / "yt-dlp"
 SPOTDL_LOCK = threading.Lock()
@@ -797,6 +992,7 @@ def import_spotdl_mp3_file(
 
     shutil.move(str(mp3_path), str(dest_path))
     duration, peaks = compute_audio_info_and_peaks(dest_path)
+    auto_vol = compute_auto_gain_volume(dest_path)
 
     palette = [
         "#22c55e",
@@ -815,7 +1011,7 @@ def import_spotdl_mp3_file(
     cur = conn.execute(
         """
         INSERT INTO tracks (title, artist, filename, category_id, duration, volume, color, peaks_json, sort_order)
-        VALUES (?, ?, ?, ?, ?, 1.0, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             title,
@@ -823,6 +1019,7 @@ def import_spotdl_mp3_file(
             unique_filename,
             category_id,
             duration,
+            auto_vol,
             track_color,
             json.dumps(peaks),
             max_order + 1,
@@ -1772,6 +1969,17 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/tracks/bulk-delete":
             return self.handle_bulk_delete_tracks()
 
+        if path == "/api/tracks/normalize-all":
+            return self.handle_normalize_all_tracks()
+
+        m_autogain = re.match(r"^/api/tracks/(\d+)/auto-gain$", path)
+        if m_autogain:
+            return self.handle_auto_gain_track(int(m_autogain.group(1)))
+
+        m_autocues = re.match(r"^/api/tracks/(\d+)/auto-cues$", path)
+        if m_autocues:
+            return self.handle_auto_detect_cues(int(m_autocues.group(1)))
+
         m_cue = re.match(r"^/api/tracks/(\d+)/cues$", path)
         if m_cue:
             return self.handle_create_cue(int(m_cue.group(1)))
@@ -1898,12 +2106,13 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                 title = parts[1].strip()
 
             duration, peaks = compute_audio_info_and_peaks(dest_path)
+            auto_vol = compute_auto_gain_volume(dest_path)
             track_color = color if len(uploaded_files) == 1 else palette[idx % len(palette)]
 
             cur = conn.execute(
                 """
                 INSERT INTO tracks (title, artist, filename, category_id, duration, volume, color, peaks_json, sort_order)
-                VALUES (?, ?, ?, ?, ?, 1.0, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     title,
@@ -1911,6 +2120,7 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                     unique_filename,
                     category_id,
                     duration,
+                    auto_vol,
                     track_color,
                     json.dumps(peaks),
                     max_order + 1 + idx,
@@ -2050,6 +2260,110 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             PLAYER_ENGINE.refresh_track_metadata(tracks)
 
         self.send_json({"ok": True, "deleted_count": len(rows)})
+
+    def handle_auto_gain_track(self, track_id: int):
+        conn = get_db()
+        row = conn.execute("SELECT id, filename FROM tracks WHERE id = ?", (track_id,)).fetchone()
+        if not row:
+            conn.close()
+            return self.send_json({"error": "Lied nicht gefunden"}, 404)
+
+        filepath = UPLOADS_DIR / os.path.basename(row["filename"])
+        if not filepath.is_file():
+            conn.close()
+            return self.send_json({"error": "Audio-Datei nicht gefunden"}, 404)
+
+        auto_vol = compute_auto_gain_volume(filepath)
+        conn.execute("UPDATE tracks SET volume = ? WHERE id = ?", (auto_vol, track_id))
+        conn.commit()
+        conn.close()
+
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+
+        self.send_json(
+            {
+                "ok": True,
+                "track_id": track_id,
+                "volume": auto_vol,
+                "volume_pct": round(auto_vol * 100),
+            }
+        )
+
+    def handle_normalize_all_tracks(self):
+        conn = get_db()
+        rows = conn.execute("SELECT id, filename FROM tracks").fetchall()
+        normalized_count = 0
+        for r in rows:
+            filepath = UPLOADS_DIR / os.path.basename(r["filename"])
+            if filepath.is_file():
+                auto_vol = compute_auto_gain_volume(filepath)
+                conn.execute("UPDATE tracks SET volume = ? WHERE id = ?", (auto_vol, r["id"]))
+                normalized_count += 1
+        conn.commit()
+        conn.close()
+
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+
+        self.send_json({"ok": True, "normalized_count": normalized_count})
+
+    def handle_auto_detect_cues(self, track_id: int):
+        conn = get_db()
+        row = conn.execute(
+            "SELECT id, filename, duration FROM tracks WHERE id = ?", (track_id,)
+        ).fetchone()
+        if not row:
+            conn.close()
+            return self.send_json({"error": "Lied nicht gefunden"}, 404)
+
+        filepath = UPLOADS_DIR / os.path.basename(row["filename"])
+        if not filepath.is_file():
+            conn.close()
+            return self.send_json({"error": "Audio-Datei nicht gefunden"}, 404)
+
+        existing_cues = [
+            float(c["start_time"])
+            for c in conn.execute(
+                "SELECT start_time FROM cues WHERE track_id = ?", (track_id,)
+            ).fetchall()
+        ]
+
+        suggested = detect_track_auto_cues(filepath, float(row["duration"] or 0.0))
+        added_count = 0
+        for idx, cue in enumerate(suggested):
+            st = float(cue["start_time"])
+            # Keinen doppelten Cue anlegen, falls im Abstand von 2.0s bereits einer existiert
+            if any(abs(st - ex) < 2.0 for ex in existing_cues):
+                continue
+            conn.execute(
+                """
+                INSERT INTO cues (track_id, label, start_time, end_time, color, fade_in, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    track_id,
+                    cue["label"],
+                    st,
+                    cue["end_time"],
+                    cue["color"],
+                    1 if cue["fade_in"] else 0,
+                    idx,
+                ),
+            )
+            existing_cues.append(st)
+            added_count += 1
+
+        conn.commit()
+        conn.close()
+
+        if PLAYER_ENGINE:
+            tracks, _ = load_tracks_and_settings()
+            PLAYER_ENGINE.refresh_track_metadata(tracks)
+
+        self.send_json({"ok": True, "added_count": added_count})
 
     def handle_create_cue(self, track_id: int):
         data = self.read_json_body()

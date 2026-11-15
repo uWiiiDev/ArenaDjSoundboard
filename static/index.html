@@ -12,7 +12,7 @@
   <link rel="alternate icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="stylesheet" href="/styles.css?v=20261115a" />
+  <link rel="stylesheet" href="/styles.css?v=20261115b" />
 </head>
 <body>
   <!-- RESUME BANNER FÜR LOKALEN GERÄTE-TON NACH ERZWUNGENEM SEITEN-RELOAD (iOS SAFARI) -->
@@ -282,6 +282,20 @@
           <button type="button" class="btn btn-secondary btn-bulk-sm" id="bulkExitBtn" data-i18n="bulk_done_btn">
             ✕ Fertig
           </button>
+        </div>
+      </div>
+
+      <!-- LOKALE VORHÖR-LEISTE (PRE-LISTEN AUF DIESEM GERÄT / IPAD UNABHÄNGIG VOM SERVER-TON) -->
+      <div class="prelisten-bar hidden" id="prelistenBar">
+        <div class="prelisten-left">
+          <span class="prelisten-badge" data-i18n="prelisten_badge">🎧 VORHÖREN</span>
+          <span class="prelisten-title" id="prelistenTitle">–</span>
+        </div>
+        <div class="prelisten-controls">
+          <button type="button" class="btn btn-secondary btn-bulk-sm" id="prelistenBackBtn" title="-10s">⏪ -10s</button>
+          <span class="prelisten-time" id="prelistenTime">0:00 / 0:00</span>
+          <button type="button" class="btn btn-secondary btn-bulk-sm" id="prelistenFwdBtn" title="+15s">⏩ +15s</button>
+          <button type="button" class="btn btn-danger btn-bulk-sm" id="prelistenStopBtn" data-i18n="prelisten_stop_btn">⏹ Stop</button>
         </div>
       </div>
 
@@ -632,7 +646,19 @@
           </div>
           <div class="form-group form-group-small">
             <label data-i18n="meta_vol_label">Song-Lautstärke</label>
-            <input type="number" id="editTrackVolume" min="10" max="150" step="5" value="100" />
+            <div class="vol-input-with-auto">
+              <input type="number" id="editTrackVolume" min="10" max="150" step="5" value="100" />
+              <button
+                type="button"
+                class="btn btn-secondary btn-auto-gain-inline"
+                id="autoGainTrackBtn"
+                data-i18n="auto_gain_inline_btn"
+                data-i18n-title="auto_gain_inline_title"
+                title="Optimale Lautstärke für dieses Lied automatisch berechnen (Auto-Gain)"
+              >
+                🔊 Auto
+              </button>
+            </div>
           </div>
           <div class="form-group form-group-small">
             <label data-i18n="meta_loop_label">Endlos-Loop</label>
@@ -656,6 +682,16 @@
               </span>
               <button class="btn btn-accent" id="markCurrentPosBtn" data-i18n="editor_mark_btn">
                 📍 Aktuelle Position als Highlight speichern
+              </button>
+              <button
+                type="button"
+                class="btn btn-secondary btn-auto-cues"
+                id="autoDetectCuesBtn"
+                data-i18n="editor_auto_cues_btn"
+                data-i18n-title="editor_auto_cues_title"
+                title="Analysiert das Lied automatisch auf Beat-Start, Drops und Refrains"
+              >
+                ✨ Drops / Refrains automatisch finden
               </button>
             </div>
           </div>
@@ -909,6 +945,23 @@
           </div>
         </div>
 
+        <!-- AUTOMATISCHE LAUTSTÄRKE-NORMALISIERUNG (AUTO-GAIN) -->
+        <div class="autogain-box">
+          <div class="update-header">
+            <span data-i18n="autogain_heading">🔊 Lautstärke-Normalisierung (Auto-Gain)</span>
+            <span class="update-version-badge" data-i18n="autogain_badge">Automatisch beim Import aktiv</span>
+          </div>
+          <div class="update-cur-sub" data-i18n="autogain_sub">
+            Neue Lieder (MP3-Upload &amp; Spotify) werden automatisch auf einen einheitlichen Hallen-Referenzpegel eingemessen. Hier kannst du auch alle bereits vorhandenen Lieder in einem Rutsch angleichen:
+          </div>
+          <div class="update-actions-row">
+            <button type="button" class="btn btn-secondary" id="normalizeAllTracksBtn" data-i18n="normalize_all_btn">
+              🔊 Alle vorhandenen Lieder jetzt automatisch einpegeln
+            </button>
+            <span class="autogain-status-msg hidden" id="normalizeAllStatusMsg"></span>
+          </div>
+        </div>
+
         <!-- KATEGORIEN VERWALTEN -->
         <div class="categories-manage-box">
           <h3 data-i18n="manage_cats_heading">Kategorien verwalten</h3>
@@ -987,7 +1040,7 @@
     </div>
   </div>
 
-  <script src="/i18n.js?v=20261115a"></script>
-  <script src="/app.js?v=20261115a"></script>
+  <script src="/i18n.js?v=20261115b"></script>
+  <script src="/app.js?v=20261115b"></script>
 </body>
 </html>

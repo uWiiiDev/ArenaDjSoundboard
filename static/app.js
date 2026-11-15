@@ -87,6 +87,9 @@ const state = {
   editingTrackId: null,
   editorCursorTime: 0.0,
   editorIsPlaying: false,
+
+  // Lokales Vorhören (Pre-Listen / Cue-Kopfhörer unabhängig vom Hallen-Server-Ton)
+  prelistenTrackId: null,
 };
 
 // ============================================================================
@@ -124,6 +127,116 @@ editorAudio.preload = "auto";
 editorAudio.playsInline = true;
 editorAudio.setAttribute("playsinline", "");
 editorAudio.setAttribute("webkit-playsinline", "");
+
+const prelistenAudio = new Audio();
+prelistenAudio.preload = "auto";
+prelistenAudio.playsInline = true;
+prelistenAudio.setAttribute("playsinline", "");
+prelistenAudio.setAttribute("webkit-playsinline", "");
+
+function updatePrelistenUI() {
+  const bar = document.getElementById("prelistenBar");
+  const titleEl = document.getElementById("prelistenTitle");
+  const timeEl = document.getElementById("prelistenTime");
+  const isActive = Boolean(state.prelistenTrackId && !prelistenAudio.paused);
+
+  if (bar) {
+    bar.classList.toggle("hidden", !isActive);
+  }
+
+  if (isActive) {
+    const track = state.tracks.find((tr) => tr.id === state.prelistenTrackId);
+    if (titleEl && track) {
+      titleEl.textContent = track.title;
+    }
+    if (timeEl) {
+      const dur = prelistenAudio.duration || (track ? track.duration : 0) || 0;
+      timeEl.textContent = `${formatTime(prelistenAudio.currentTime || 0)} / ${formatTime(dur)}`;
+    }
+  }
+
+  document.querySelectorAll("[data-prelisten-track]").forEach((btn) => {
+    const id = Number(btn.dataset.prelistenTrack);
+    const active = isActive && id === state.prelistenTrackId;
+    btn.classList.toggle("active", active);
+    btn.title = t(active ? "prelisten_active_title" : "prelisten_btn_title");
+  });
+}
+
+function stopPrelisten() {
+  try {
+    prelistenAudio.pause();
+  } catch (_) {}
+  state.prelistenTrackId = null;
+  updatePrelistenUI();
+}
+
+function togglePrelistenTrack(trackId) {
+  const track = state.tracks.find((tr) => tr.id === trackId);
+  if (!track) return;
+
+  if (state.prelistenTrackId === track.id && !prelistenAudio.paused) {
+    stopPrelisten();
+    return;
+  }
+
+  if (!editorAudio.paused) {
+    editorAudio.pause();
+  }
+  // Falls wir gerade im lokalen Geräte-Modus sind und Hauptton auf demselben Gerät läuft,
+  // pausieren wir den Hauptton nicht ungefragt, außer der Nutzer möchte vorhören:
+  state.prelistenTrackId = track.id;
+  const startCue = track.cues && track.cues.length > 0 ? Number(track.cues[0].start_time || 0) : 0;
+
+  const isSameSrc = Boolean(prelistenAudio.src) && prelistenAudio.src.endsWith(track.url);
+  if (!isSameSrc) {
+    prelistenAudio.src = track.url;
+  }
+  prelistenAudio.volume = Math.max(0.15, Math.min(1.0, Number(track.volume || 1.0) * 0.85));
+
+  const applyStartAndPlay = () => {
+    if (startCue > 0.05) {
+      try {
+        prelistenAudio.currentTime = startCue;
+      } catch (_) {}
+    }
+    const p = prelistenAudio.play();
+    if (p !== undefined) {
+      p.then(() => updatePrelistenUI()).catch(() => {
+        stopPrelisten();
+      });
+    } else {
+      updatePrelistenUI();
+    }
+  };
+
+  if (prelistenAudio.readyState >= 1) {
+    applyStartAndPlay();
+  } else {
+    const onReady = () => {
+      prelistenAudio.removeEventListener("loadedmetadata", onReady);
+      prelistenAudio.removeEventListener("canplay", onReady);
+      if (state.prelistenTrackId === track.id) {
+        applyStartAndPlay();
+      }
+    };
+    prelistenAudio.addEventListener("loadedmetadata", onReady);
+    prelistenAudio.addEventListener("canplay", onReady);
+    prelistenAudio.load();
+    const p = prelistenAudio.play();
+    if (p !== undefined) {
+      p.then(() => updatePrelistenUI()).catch(() => {});
+    }
+  }
+  updatePrelistenUI();
+}
+
+prelistenAudio.addEventListener("timeupdate", updatePrelistenUI);
+prelistenAudio.addEventListener("play", updatePrelistenUI);
+prelistenAudio.addEventListener("pause", updatePrelistenUI);
+prelistenAudio.addEventListener("ended", () => {
+  stopPrelisten();
+});
 
 function ensureAudioContext() {
   // Hinweis für iPadOS / iOS Safari:
@@ -887,6 +1000,9 @@ async function tryRestoreLocalPlayback() {
 async function triggerTrackCue(track, cue, options = {}) {
   if (!editorAudio.paused) {
     editorAudio.pause();
+  }
+  if (!isServerMode() || state.prelistenTrackId === track.id) {
+    stopPrelisten();
   }
 
   if (isServerMode()) {
@@ -1860,6 +1976,23 @@ function renderSoundboard() {
             <div class="list-actions">
               <button
                 type="button"
+                class="btn-prelisten-toggle ${
+                  state.prelistenTrackId === track.id && !prelistenAudio.paused ? "active" : ""
+                }"
+                data-prelisten-track="${track.id}"
+                title="${escapeHtml(
+                  t(
+                    state.prelistenTrackId === track.id && !prelistenAudio.paused
+                      ? "prelisten_active_title"
+                      : "prelisten_btn_title"
+                  )
+                )}"
+                aria-label="${escapeHtml(t("prelisten_btn_title"))}"
+              >
+                🎧
+              </button>
+              <button
+                type="button"
                 class="btn-loop-toggle ${track.loop ? "active" : ""}"
                 data-toggle-loop="${track.id}"
                 title="${escapeHtml(loopTip)}"
@@ -1945,6 +2078,23 @@ function renderSoundboard() {
               <div class="card-actions-right">
                 <button
                   type="button"
+                  class="btn-prelisten-toggle ${
+                    state.prelistenTrackId === track.id && !prelistenAudio.paused ? "active" : ""
+                  }"
+                  data-prelisten-track="${track.id}"
+                  title="${escapeHtml(
+                    t(
+                      state.prelistenTrackId === track.id && !prelistenAudio.paused
+                        ? "prelisten_active_title"
+                        : "prelisten_btn_title"
+                    )
+                  )}"
+                  aria-label="${escapeHtml(t("prelisten_btn_title"))}"
+                >
+                  🎧
+                </button>
+                <button
+                  type="button"
                   class="btn-loop-toggle ${track.loop ? "active" : ""}"
                   data-toggle-loop="${track.id}"
                   title="${escapeHtml(loopTip)}"
@@ -1988,6 +2138,14 @@ function renderSoundboard() {
         const cue =
           cueIdx >= 0 && track.cues && track.cues[cueIdx] ? track.cues[cueIdx] : null;
         triggerTrackCue(track, cue);
+      });
+    });
+
+    // Event-Listener für lokales Vorhören auf dem Gerät (🎧)
+    grid.querySelectorAll("[data-prelisten-track]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        togglePrelistenTrack(Number(btn.dataset.prelistenTrack));
       });
     });
 
@@ -2278,6 +2436,7 @@ function openCueEditor(trackId) {
   const track = state.tracks.find((t) => t.id === trackId);
   if (!track) return;
 
+  stopPrelisten();
   state.editingTrackId = trackId;
   state.editorCursorTime =
     track.cues && track.cues.length > 0 ? Number(track.cues[0].start_time) : 0.0;
@@ -3098,6 +3257,95 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // ⚡ Automatische Highlight-Erkennung (Drops / Refrains automatisch finden)
+  const autoDetectCuesBtn = document.getElementById("autoDetectCuesBtn");
+  if (autoDetectCuesBtn) {
+    autoDetectCuesBtn.addEventListener("click", async () => {
+      if (!state.editingTrackId) return;
+      const origHtml = autoDetectCuesBtn.innerHTML;
+      autoDetectCuesBtn.disabled = true;
+      autoDetectCuesBtn.textContent = t("editor_auto_cues_busy");
+      try {
+        const res = await fetch(`/api/tracks/${state.editingTrackId}/auto-cues`, {
+          method: "POST",
+        });
+        const data = await res.json();
+        await loadStateFromServer();
+        const updatedTrack = state.tracks.find((tr) => tr.id === state.editingTrackId);
+        if (updatedTrack) {
+          renderEditorCuesList(updatedTrack);
+          drawEditorWaveform(updatedTrack);
+        }
+        if (res.ok && data.added_count > 0) {
+          autoDetectCuesBtn.textContent = t("editor_auto_cues_done", { count: data.added_count });
+          setTimeout(() => {
+            autoDetectCuesBtn.innerHTML = origHtml;
+            applyStaticTranslations();
+          }, 2200);
+        } else {
+          autoDetectCuesBtn.innerHTML = origHtml;
+          applyStaticTranslations();
+        }
+      } catch (_) {
+        autoDetectCuesBtn.innerHTML = origHtml;
+        applyStaticTranslations();
+      } finally {
+        autoDetectCuesBtn.disabled = false;
+      }
+    });
+  }
+
+  // 🔊 Automatische Lautstärke-Einpegelung für das aktuelle Lied im Editor
+  const autoGainTrackBtn = document.getElementById("autoGainTrackBtn");
+  if (autoGainTrackBtn) {
+    autoGainTrackBtn.addEventListener("click", async () => {
+      if (!state.editingTrackId) return;
+      autoGainTrackBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/tracks/${state.editingTrackId}/auto-gain`, {
+          method: "POST",
+        });
+        const data = await res.json();
+        if (res.ok && data.volume_pct) {
+          const volInput = document.getElementById("editTrackVolume");
+          if (volInput) {
+            volInput.value = data.volume_pct;
+          }
+          await loadStateFromServer();
+        }
+      } catch (_) {
+      } finally {
+        autoGainTrackBtn.disabled = false;
+      }
+    });
+  }
+
+  // 🎧 Vorhör-Leiste (Pre-Listen Bar) Buttons (-10s, +15s, Stop)
+  document.getElementById("prelistenBackBtn")?.addEventListener("click", () => {
+    if (!state.prelistenTrackId) return;
+    try {
+      prelistenAudio.currentTime = Math.max(0, (prelistenAudio.currentTime || 0) - 10);
+      updatePrelistenUI();
+    } catch (_) {}
+  });
+
+  document.getElementById("prelistenFwdBtn")?.addEventListener("click", () => {
+    if (!state.prelistenTrackId) return;
+    const track = state.tracks.find((tr) => tr.id === state.prelistenTrackId);
+    const maxDur = prelistenAudio.duration || (track ? track.duration : 300) || 300;
+    try {
+      prelistenAudio.currentTime = Math.min(
+        Math.max(0, maxDur - 0.5),
+        (prelistenAudio.currentTime || 0) + 15
+      );
+      updatePrelistenUI();
+    } catch (_) {}
+  });
+
+  document.getElementById("prelistenStopBtn")?.addEventListener("click", () => {
+    stopPrelisten();
+  });
+
   // Lied-Stammdaten speichern
   document.getElementById("saveTrackMetaBtn").addEventListener("click", saveEditorTrackMetadata);
 
@@ -3790,6 +4038,37 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   const checkUpdateBtn = document.getElementById("checkUpdateBtn");
+  const normalizeAllTracksBtn = document.getElementById("normalizeAllTracksBtn");
+  const normalizeAllStatusMsg = document.getElementById("normalizeAllStatusMsg");
+
+  if (normalizeAllTracksBtn) {
+    normalizeAllTracksBtn.addEventListener("click", async () => {
+      normalizeAllTracksBtn.disabled = true;
+      const origText = normalizeAllTracksBtn.textContent;
+      normalizeAllTracksBtn.textContent = t("normalize_all_busy");
+      if (normalizeAllStatusMsg) {
+        normalizeAllStatusMsg.textContent = t("normalize_all_busy");
+        normalizeAllStatusMsg.classList.remove("hidden");
+      }
+      try {
+        const res = await fetch("/api/tracks/normalize-all", { method: "POST" });
+        const data = await res.json();
+        await loadStateFromServer();
+        if (res.ok && normalizeAllStatusMsg) {
+          normalizeAllStatusMsg.textContent = t("normalize_all_done", {
+            count: data.normalized_count || 0,
+          });
+        }
+      } catch (_) {
+        if (normalizeAllStatusMsg) {
+          normalizeAllStatusMsg.classList.add("hidden");
+        }
+      } finally {
+        normalizeAllTracksBtn.disabled = false;
+        normalizeAllTracksBtn.textContent = origText;
+      }
+    });
+  }
   const installUpdateBtn = document.getElementById("installUpdateBtn");
   const updateStatusBox = document.getElementById("updateStatusBox");
   const updateStatusText = document.getElementById("updateStatusText");
