@@ -2261,6 +2261,14 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         if m_cue:
             return self.handle_create_cue(int(m_cue.group(1)))
 
+        m_sfx_up = re.match(r"^/api/sfx/([a-zA-Z0-9_-]+)/upload$", path)
+        if m_sfx_up:
+            return self.handle_upload_custom_sfx(m_sfx_up.group(1))
+
+        m_sfx_rst = re.match(r"^/api/sfx/([a-zA-Z0-9_-]+)/reset$", path)
+        if m_sfx_rst:
+            return self.handle_reset_custom_sfx(m_sfx_rst.group(1))
+
         if path == "/api/categories":
             return self.handle_create_category()
 
@@ -3214,10 +3222,101 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             PLAYER_ENGINE.trigger_sfx(sfx_id, duck_music=duck_music)
         elif action == "stop_sfx":
             PLAYER_ENGINE.stop_sfx()
+        elif action == "speed":
+            PLAYER_ENGINE.set_playback_speed(float(data.get("speed", 1.0)))
+        elif action == "queue_add":
+            PLAYER_ENGINE.queue_add(int(data.get("track_id", 0)))
+        elif action == "queue_remove":
+            PLAYER_ENGINE.queue_remove(int(data.get("track_id", 0)))
+        elif action == "queue_clear":
+            PLAYER_ENGINE.queue_clear()
+        elif action == "toggle_played":
+            tid = int(data.get("track_id", 0))
+            with PLAYER_ENGINE.lock:
+                if tid in PLAYER_ENGINE.played_track_ids:
+                    PLAYER_ENGINE.played_track_ids.remove(tid)
+                elif tid > 0:
+                    PLAYER_ENGINE.played_track_ids.add(tid)
+        elif action == "reset_played":
+            with PLAYER_ENGINE.lock:
+                PLAYER_ENGINE.played_track_ids.clear()
         else:
             return self.send_json({"error": f"Unbekannte Aktion: {action}"}, 400)
 
         self.send_json({"ok": True, "player_status": PLAYER_ENGINE.get_status()})
+
+    def handle_upload_custom_sfx(self, sfx_id: str):
+        allowed_ids = {"airhorn", "buzzer", "drumroll", "fanfare", "applause", "countdown"}
+        if sfx_id not in allowed_ids:
+            return self.send_json({"error": "Ungültiger Jingle-Slot"}, 400)
+
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if content_length <= 0:
+            return self.send_json({"error": "Leere Audio-Datei"}, 400)
+
+        raw_body = self.rfile.read(content_length)
+        ctype = self.headers.get("Content-Type", "")
+        audio_bytes = raw_body
+        ext = ".mp3"
+
+        if "multipart/form-data" in ctype:
+            header_bytes = f"Content-Type: {ctype}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
+            msg = BytesParser(policy=default_email_policy).parsebytes(header_bytes + raw_body)
+            for part in msg.iter_parts():
+                fn = part.get_filename()
+                if fn:
+                    audio_bytes = part.get_payload(decode=True) or b""
+                    _, e = os.path.splitext(fn)
+                    if e:
+                        ext = e.lower()
+                    break
+
+        sfx_dir = DATA_DIR / "sfx"
+        sfx_dir.mkdir(parents=True, exist_ok=True)
+        tmp_in = sfx_dir / f".tmp_sfx_{uuid.uuid4().hex[:6]}{ext}"
+        wav_out = sfx_dir / f"{sfx_id}.wav"
+        try:
+            tmp_in.write_bytes(audio_bytes)
+            trim_track_silence_file(tmp_in)
+            proc = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-v",
+                    "error",
+                    "-t",
+                    "15",
+                    "-i",
+                    str(tmp_in),
+                    "-ac",
+                    "2",
+                    "-ar",
+                    "48000",
+                    "-sample_fmt",
+                    "s16",
+                    str(wav_out),
+                ],
+                capture_output=True,
+                timeout=20,
+            )
+            if proc.returncode != 0 or not wav_out.is_file():
+                return self.send_json({"error": "Konnte Audio-Datei nicht in Jingle-WAV umwandeln."}, 400)
+        finally:
+            if tmp_in.exists():
+                tmp_in.unlink(missing_ok=True)
+
+        if PLAYER_ENGINE:
+            PLAYER_ENGINE.reload_sfx_from_disk(sfx_id)
+
+        self.send_json({"ok": True, "sfx_id": sfx_id})
+
+    def handle_reset_custom_sfx(self, sfx_id: str):
+        allowed_ids = {"airhorn", "buzzer", "drumroll", "fanfare", "applause", "countdown"}
+        if sfx_id not in allowed_ids:
+            return self.send_json({"error": "Ungültiger Jingle-Slot"}, 400)
+        if PLAYER_ENGINE:
+            PLAYER_ENGINE.reset_sfx_to_default(sfx_id)
+        self.send_json({"ok": True, "sfx_id": sfx_id})
 
     def handle_update_settings(self):
         data = self.read_json_body()

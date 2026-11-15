@@ -95,9 +95,36 @@ const state = {
   sfxBarVisible: localStorage.getItem("arena_dj_sfx_bar") !== "0",
   sfxDuckEnabled: localStorage.getItem("arena_dj_sfx_duck") !== "0",
   activeSfxId: null,
+  sfxConfigOpen: false,
+  sfxPadsMeta: {},
+  uploadingSfxId: null,
 
   // 🥁 Tempo-Filter & Sortierung (#6)
   sortOrder: "custom",
+
+  // 🔒 Live-Schutz (#5), 📋 Warteschlange (#2), 📊 Gespielt-Markierung (#6), 🎚️ Tempo (#7)
+  playLockEnabled: localStorage.getItem("arena_dj_play_lock") === "1",
+  pendingForcePlay: null,
+  queueTrackIds: [],
+  playedTrackIds: new Set(),
+  playbackSpeed: 1.0,
+  isDraggingSpeed: false,
+
+  // ⌨️ Frei belegbare Tastenkürzel (Hotkeys)
+  hotkeys: {
+    play_pause: " ",
+    fade_out: "f",
+    stop: "Escape",
+    talkover: "t",
+    skip_next: "n",
+    sfx_1: "1",
+    sfx_2: "2",
+    sfx_3: "3",
+    sfx_4: "4",
+    sfx_5: "5",
+    sfx_6: "6",
+  },
+  learningHotkeyAction: null,
 };
 
 // ============================================================================
@@ -252,11 +279,44 @@ sfxAudio.playsInline = true;
 sfxAudio.setAttribute("playsinline", "");
 sfxAudio.setAttribute("webkit-playsinline", "");
 
+const SFX_IDS = ["airhorn", "buzzer", "drumroll", "fanfare", "applause", "countdown"];
+const DEFAULT_SFX_ICONS = {
+  airhorn: "📯",
+  buzzer: "🚨",
+  drumroll: "🥁",
+  fanfare: "🎺",
+  applause: "👏",
+  countdown: "⏱️",
+};
+const DEFAULT_HOTKEYS = {
+  play_pause: " ",
+  fade_out: "f",
+  stop: "Escape",
+  talkover: "t",
+  skip_next: "n",
+  sfx_1: "1",
+  sfx_2: "2",
+  sfx_3: "3",
+  sfx_4: "4",
+  sfx_5: "5",
+  sfx_6: "6",
+};
+
+function getSfxPadDisplay(sfxId) {
+  const meta = (state.sfxPadsMeta && state.sfxPadsMeta[sfxId]) || {};
+  const icon = meta.icon && String(meta.icon).trim() ? String(meta.icon).trim() : DEFAULT_SFX_ICONS[sfxId] || "🚨";
+  const label = meta.label && String(meta.label).trim() ? String(meta.label).trim() : t(`sfx_${sfxId}`);
+  const customTs = Number(meta.custom_ts || 0);
+  return { icon, label, customTs };
+}
+
 function updateSfxUI() {
   const bar = document.getElementById("sfxQuickBar");
   const toggleBtn = document.getElementById("sfxBarToggleBtn");
   const duckBtn = document.getElementById("sfxDuckToggleBtn");
   const stopBtn = document.getElementById("sfxStopBtn");
+  const cfgBtn = document.getElementById("sfxConfigToggleBtn");
+  const cfgDrawer = document.getElementById("sfxConfigDrawer");
 
   if (bar) {
     bar.classList.toggle("hidden", !state.sfxBarVisible);
@@ -270,9 +330,95 @@ function updateSfxUI() {
   if (stopBtn) {
     stopBtn.classList.toggle("hidden", !state.activeSfxId);
   }
+  if (cfgBtn) {
+    cfgBtn.classList.toggle("active", Boolean(state.sfxConfigOpen));
+  }
+  if (cfgDrawer) {
+    cfgDrawer.classList.toggle("hidden", !state.sfxConfigOpen);
+  }
 
   document.querySelectorAll(".sfx-pad-btn[data-sfx-id]").forEach((btn) => {
-    btn.classList.toggle("is-playing", btn.dataset.sfxId === state.activeSfxId);
+    const sfxId = btn.dataset.sfxId;
+    btn.classList.toggle("is-playing", sfxId === state.activeSfxId);
+    if (SFX_IDS.includes(sfxId)) {
+      const { icon, label } = getSfxPadDisplay(sfxId);
+      const iconEl = btn.querySelector(".sfx-icon");
+      const labelEl = btn.querySelector("span:not(.sfx-icon)");
+      if (iconEl) iconEl.textContent = icon;
+      if (labelEl) labelEl.textContent = label;
+    }
+  });
+}
+
+function renderSfxConfigDrawer() {
+  const drawer = document.getElementById("sfxConfigDrawer");
+  if (!drawer) return;
+  drawer.innerHTML = SFX_IDS.map((sfxId) => {
+    const { icon, label, customTs } = getSfxPadDisplay(sfxId);
+    return `
+      <div class="sfx-config-item" data-cfg-sfx="${sfxId}">
+        <input type="text" class="sfx-config-icon-input" value="${escapeHtml(icon)}" maxlength="4" data-sfx-icon="${sfxId}" title="Icon" />
+        <input type="text" class="sfx-config-label-input" value="${escapeHtml(label)}" maxlength="22" data-sfx-label="${sfxId}" placeholder="${escapeHtml(t(`sfx_${sfxId}`))}" />
+        <button type="button" class="btn btn-secondary btn-xs" data-sfx-upload="${sfxId}" title="Eigene MP3/WAV für diesen Jingle-Button hochladen">${escapeHtml(t("sfx_upload_btn"))}${customTs ? " ✓" : ""}</button>
+        <button type="button" class="btn btn-secondary btn-xs" data-sfx-reset="${sfxId}" title="Auf eingebauten Hallen-Sound zurücksetzen">${escapeHtml(t("sfx_reset_btn"))}</button>
+      </div>
+    `;
+  }).join("");
+
+  const persistSfxMeta = async () => {
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sfx_pads_json: JSON.stringify(state.sfxPadsMeta || {}) }),
+    });
+  };
+
+  drawer.querySelectorAll("[data-sfx-icon]").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const sfxId = inp.dataset.sfxIcon;
+      state.sfxPadsMeta[sfxId] = state.sfxPadsMeta[sfxId] || {};
+      state.sfxPadsMeta[sfxId].icon = inp.value.trim() || DEFAULT_SFX_ICONS[sfxId];
+      updateSfxUI();
+      persistSfxMeta();
+    });
+  });
+
+  drawer.querySelectorAll("[data-sfx-label]").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const sfxId = inp.dataset.sfxLabel;
+      state.sfxPadsMeta[sfxId] = state.sfxPadsMeta[sfxId] || {};
+      state.sfxPadsMeta[sfxId].label = inp.value.trim();
+      updateSfxUI();
+      persistSfxMeta();
+    });
+  });
+
+  drawer.querySelectorAll("[data-sfx-upload]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.uploadingSfxId = btn.dataset.sfxUpload;
+      const fileInp = document.getElementById("sfxCustomUploadInput");
+      if (fileInp) {
+        fileInp.value = "";
+        fileInp.click();
+      }
+    });
+  });
+
+  drawer.querySelectorAll("[data-sfx-reset]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const sfxId = btn.dataset.sfxReset;
+      btn.disabled = true;
+      try {
+        await fetch(`/api/sfx/${encodeURIComponent(sfxId)}/reset`, { method: "POST" });
+        delete state.sfxPadsMeta[sfxId];
+        await persistSfxMeta();
+        updateSfxUI();
+        renderSfxConfigDrawer();
+      } catch (_) {
+      } finally {
+        btn.disabled = false;
+      }
+    });
   });
 }
 
@@ -290,7 +436,8 @@ function triggerSfx(sfxId) {
   }
 
   state.activeSfxId = sfxId;
-  const targetUrl = `/sfx/${encodeURIComponent(sfxId)}.wav`;
+  const { customTs } = getSfxPadDisplay(sfxId);
+  const targetUrl = `/sfx/${encodeURIComponent(sfxId)}.wav${customTs ? `?t=${customTs}` : ""}`;
   if (!sfxAudio.src || !sfxAudio.src.endsWith(targetUrl)) {
     sfxAudio.src = targetUrl;
   } else {
@@ -325,6 +472,139 @@ function stopSfx() {
   state.activeSfxId = null;
   applyEffectiveVolume();
   updateSfxUI();
+}
+
+function toggleQueueTrack(trackId) {
+  const tid = Number(trackId);
+  if (!tid) return;
+  const idx = state.queueTrackIds.indexOf(tid);
+  if (idx >= 0) {
+    state.queueTrackIds.splice(idx, 1);
+    if (isServerMode()) {
+      sendServerCommand({ action: "queue_remove", track_id: tid });
+    }
+  } else {
+    state.queueTrackIds.push(tid);
+    if (isServerMode()) {
+      sendServerCommand({ action: "queue_add", track_id: tid });
+    }
+  }
+  renderSoundboard();
+  updatePlayerUI();
+}
+
+function clearQueueTracks() {
+  state.queueTrackIds = [];
+  if (isServerMode()) {
+    sendServerCommand({ action: "queue_clear" });
+  }
+  renderSoundboard();
+  updatePlayerUI();
+}
+
+function togglePlayedTrack(trackId) {
+  const tid = Number(trackId);
+  if (!tid) return;
+  if (state.playedTrackIds.has(tid)) {
+    state.playedTrackIds.delete(tid);
+  } else {
+    state.playedTrackIds.add(tid);
+  }
+  if (isServerMode()) {
+    sendServerCommand({ action: "toggle_played", track_id: tid });
+  }
+  renderSoundboard();
+  updatePlayerUI();
+}
+
+function resetAllPlayedTracks() {
+  state.playedTrackIds.clear();
+  if (isServerMode()) {
+    sendServerCommand({ action: "reset_played" });
+  }
+  renderSoundboard();
+  updatePlayerUI();
+}
+
+let _speedPushTimer = null;
+function setPlaybackSpeed(speedVal, immediate = false) {
+  const clamped = Math.max(0.8, Math.min(1.2, Math.round(Number(speedVal || 1.0) * 100) / 100));
+  state.playbackSpeed = clamped;
+  decks.forEach((d) => {
+    try {
+      d.audio.playbackRate = clamped;
+    } catch (_) {}
+  });
+  const slider = document.getElementById("playbackSpeedSlider");
+  const resetBtn = document.getElementById("speedResetBtn");
+  const pct = Math.round(clamped * 100);
+  if (slider && !state.isDraggingSpeed) {
+    slider.value = String(pct);
+  }
+  if (resetBtn) {
+    resetBtn.textContent = `${pct}%`;
+    resetBtn.classList.toggle("modified", pct !== 100);
+  }
+  if (isServerMode()) {
+    if (_speedPushTimer) clearTimeout(_speedPushTimer);
+    _speedPushTimer = setTimeout(
+      () => {
+        sendServerCommand({ action: "speed", speed: clamped });
+      },
+      immediate ? 0 : 45
+    );
+  }
+}
+
+function formatHotkeyDisplay(keyStr) {
+  if (!keyStr) return "–";
+  if (keyStr === " ") return "SPACE";
+  if (keyStr === "Escape") return "ESC";
+  if (keyStr === "ArrowUp") return "↑";
+  if (keyStr === "ArrowDown") return "↓";
+  if (keyStr === "ArrowLeft") return "←";
+  if (keyStr === "ArrowRight") return "→";
+  return String(keyStr).length === 1 ? String(keyStr).toUpperCase() : String(keyStr);
+}
+
+function renderHotkeysGrid() {
+  const grid = document.getElementById("hotkeysListGrid");
+  if (!grid) return;
+  const actions = [
+    "play_pause",
+    "fade_out",
+    "stop",
+    "talkover",
+    "skip_next",
+    "sfx_1",
+    "sfx_2",
+    "sfx_3",
+    "sfx_4",
+    "sfx_5",
+    "sfx_6",
+  ];
+  grid.innerHTML = actions
+    .map((act) => {
+      const isListening = state.learningHotkeyAction === act;
+      const curKey = state.hotkeys[act] ?? DEFAULT_HOTKEYS[act] ?? "";
+      return `
+        <div class="hotkey-row">
+          <span class="hotkey-action-label">${escapeHtml(t(`hk_${act}`))}</span>
+          <button type="button" class="btn-hotkey-bind ${isListening ? "listening" : ""}" data-bind-hotkey="${act}">
+            ${escapeHtml(isListening ? t("hk_press_key") : formatHotkeyDisplay(curKey))}
+          </button>
+        </div>
+      `;
+    })
+    .join("");
+
+  grid.querySelectorAll("[data-bind-hotkey]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const act = btn.dataset.bindHotkey;
+      state.learningHotkeyAction = state.learningHotkeyAction === act ? null : act;
+      renderHotkeysGrid();
+    });
+  });
 }
 
 sfxAudio.addEventListener("ended", () => {
@@ -912,7 +1192,7 @@ function applyServerPlayerStatus(ps) {
 
   const prevSig = `${state.isPlaying}:${state.currentTrack ? state.currentTrack.id : 0}:${
     state.currentCue ? state.currentCue.start_time : -1
-  }`;
+  }:${(state.queueTrackIds || []).join(",")}:${Array.from(state.playedTrackIds || []).join(",")}`;
 
   state.isPlaying = Boolean(ps.is_playing);
   state.isFadingOut = Boolean(ps.is_fading_out);
@@ -922,6 +1202,23 @@ function applyServerPlayerStatus(ps) {
   state.serverEffectivePct = Number(ps.effective_volume_pct ?? 85);
   state.serverNextTrackId = ps.next_track_id ? Number(ps.next_track_id) : null;
   state.activeSfxId = ps.active_sfx || null;
+  if (Array.isArray(ps.queue_track_ids)) {
+    state.queueTrackIds = ps.queue_track_ids.map((id) => Number(id));
+  }
+  if (Array.isArray(ps.played_track_ids)) {
+    state.playedTrackIds = new Set(ps.played_track_ids.map((id) => Number(id)));
+  }
+  if (!state.isDraggingSpeed && typeof ps.playback_speed === "number") {
+    state.playbackSpeed = ps.playback_speed;
+    const slider = document.getElementById("playbackSpeedSlider");
+    const resetBtn = document.getElementById("speedResetBtn");
+    const pct = Math.round(ps.playback_speed * 100);
+    if (slider) slider.value = String(pct);
+    if (resetBtn) {
+      resetBtn.textContent = `${pct}%`;
+      resetBtn.classList.toggle("modified", pct !== 100);
+    }
+  }
   updateSfxUI();
   if (Array.isArray(ps.spectrum) && ps.spectrum.length >= 24) {
     state.serverSpectrum = ps.spectrum.slice(0, 24);
@@ -1011,7 +1308,7 @@ function applyServerPlayerStatus(ps) {
 
   const nextSig = `${state.isPlaying}:${state.currentTrack ? state.currentTrack.id : 0}:${
     state.currentCue ? state.currentCue.start_time : -1
-  }`;
+  }:${(state.queueTrackIds || []).join(",")}:${Array.from(state.playedTrackIds || []).join(",")}`;
   if (prevSig !== nextSig) {
     renderSoundboard();
   }
@@ -1096,6 +1393,36 @@ async function tryRestoreLocalPlayback() {
 // PLAYBACK STEUERUNG (START, CROSSFADE, HIGHLIGHT-JUMP, FADE-OUT, STOP)
 // ============================================================================
 async function triggerTrackCue(track, cue, options = {}) {
+  // 🔒 Live-Schutz (Play-Lock): Verhindert versehentliches Abwürgen laufender Musik!
+  if (
+    state.playLockEnabled &&
+    state.isPlaying &&
+    !options.forceOverride &&
+    !options.isCrossfade &&
+    options.resumeAt === undefined &&
+    (!state.currentTrack || state.currentTrack.id !== track.id)
+  ) {
+    state.pendingForcePlay = { track, cue };
+    if (!state.queueTrackIds.includes(track.id)) {
+      state.queueTrackIds.push(track.id);
+    }
+    if (isServerMode()) {
+      sendServerCommand({ action: "queue_add", track_id: track.id });
+    }
+    const bar = document.getElementById("playLockNoticeBar");
+    const txt = document.getElementById("playLockNoticeText");
+    if (bar && txt) {
+      txt.textContent = t("playlock_queued_msg", { title: track.title });
+      bar.classList.remove("hidden");
+    }
+    renderSoundboard();
+    updatePlayerUI();
+    return false;
+  }
+
+  document.getElementById("playLockNoticeBar")?.classList.add("hidden");
+  state.pendingForcePlay = null;
+
   if (!editorAudio.paused) {
     editorAudio.pause();
   }
@@ -1193,6 +1520,8 @@ async function triggerTrackCue(track, cue, options = {}) {
   state.isFadingOut = false;
 
   if (track && track.id) {
+    state.playedTrackIds.add(track.id);
+    state.queueTrackIds = state.queueTrackIds.filter((id) => id !== track.id);
     state.shuffleHistory.push(track.id);
     if (state.shuffleHistory.length > 250) {
       state.shuffleHistory = state.shuffleHistory.slice(-250);
@@ -1202,6 +1531,9 @@ async function triggerTrackCue(track, cue, options = {}) {
 
   targetDeck.trackVolume = track.volume || 1.0;
   targetDeck.fadeGain = fadeInSec > 0.06 ? 0.05 : 1.0;
+  try {
+    targetDeck.audio.playbackRate = state.playbackSpeed || 1.0;
+  } catch (_) {}
   applyEffectiveVolume();
 
   if (targetDeck.seekHandler) {
@@ -1324,6 +1656,19 @@ function getCandidateTrackPool() {
 
 function getNextTrack(consumePlanned = false) {
   if (!state.currentTrack || state.tracks.length === 0) return null;
+
+  // 📋 Priorität 1: Warteschlange (Next-Up Queue)
+  if (Array.isArray(state.queueTrackIds) && state.queueTrackIds.length > 0) {
+    for (const qId of state.queueTrackIds) {
+      const qTrack = state.tracks.find((tr) => tr.id === Number(qId));
+      if (qTrack) {
+        if (consumePlanned) {
+          state.queueTrackIds = state.queueTrackIds.filter((id) => id !== qTrack.id);
+        }
+        return qTrack;
+      }
+    }
+  }
 
   if (isServerMode() && state.serverNextTrackId && !consumePlanned) {
     const srvNext = state.tracks.find((tr) => tr.id === state.serverNextTrackId);
@@ -1701,10 +2046,24 @@ async function loadStateFromServer() {
         state.eqBands = parts.slice(0, 5);
       }
     }
+    if (data.settings.sfx_pads_json) {
+      try {
+        state.sfxPadsMeta = JSON.parse(data.settings.sfx_pads_json) || {};
+      } catch (_) {}
+    }
+    if (data.settings.hotkeys_json) {
+      try {
+        const parsedHk = JSON.parse(data.settings.hotkeys_json);
+        if (parsedHk && typeof parsedHk === "object") {
+          state.hotkeys = { ...DEFAULT_HOTKEYS, ...parsedHk };
+        }
+      } catch (_) {}
+    }
   }
 
   applyPanelOrder();
   syncVizAndEqUI();
+  updateSfxUI();
 
   if (data.player_status && typeof data.player_status.audio_available === "boolean") {
     state.serverAudioAvailable = data.player_status.audio_available;
@@ -2083,7 +2442,13 @@ function renderSoundboard() {
                 ${playSymbol}
               </button>
               <div class="list-title-block">
-                <div class="list-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</div>
+                <div class="list-title" title="${escapeHtml(track.title)}">${
+          state.playedTrackIds && state.playedTrackIds.has(track.id)
+            ? `<span class="track-played-badge" data-toggle-played="${track.id}" title="${escapeHtml(
+                t("played_badge_title")
+              )}">✓</span>`
+            : ""
+        }${escapeHtml(track.title)}</div>
                 <div class="list-sub">${escapeHtml(track.artist || t("default_artist"))} • ${formatTime(track.duration)}${renderBpmBadge(track.bpm)}</div>
               </div>
             </div>
@@ -2093,6 +2458,15 @@ function renderSoundboard() {
             </div>
 
             <div class="list-actions">
+              ${(() => {
+                const qPos = (state.queueTrackIds || []).indexOf(track.id);
+                const inQ = qPos >= 0;
+                return `<button type="button" class="btn-queue-add ${
+                  inQ ? "in-queue" : ""
+                }" data-queue-track="${track.id}" title="${escapeHtml(
+                  inQ ? t("queue_in_title", { pos: qPos + 1 }) : t("queue_add_title")
+                )}">${inQ ? `➕${qPos + 1}` : "➕"}</button>`;
+              })()}
               <button
                 type="button"
                 class="btn-prelisten-toggle ${
@@ -2188,13 +2562,28 @@ function renderSoundboard() {
                 ${playSymbol}
               </button>
               <div class="track-title-wrap">
-                <div class="track-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</div>
+                <div class="track-title" title="${escapeHtml(track.title)}">${
+          state.playedTrackIds && state.playedTrackIds.has(track.id)
+            ? `<span class="track-played-badge" data-toggle-played="${track.id}" title="${escapeHtml(
+                t("played_badge_title")
+              )}">✓</span>`
+            : ""
+        }${escapeHtml(track.title)}</div>
                 <div class="track-meta-sub">
                   <span>${escapeHtml(track.artist || t("default_artist"))}</span>
                   <span>• ${formatTime(track.duration)}${renderBpmBadge(track.bpm)}</span>
                 </div>
               </div>
               <div class="card-actions-right">
+                ${(() => {
+                  const qPos = (state.queueTrackIds || []).indexOf(track.id);
+                  const inQ = qPos >= 0;
+                  return `<button type="button" class="btn-queue-add ${
+                    inQ ? "in-queue" : ""
+                  }" data-queue-track="${track.id}" title="${escapeHtml(
+                    inQ ? t("queue_in_title", { pos: qPos + 1 }) : t("queue_add_title")
+                  )}">${inQ ? `➕${qPos + 1}` : "➕"}</button>`;
+                })()}
                 <button
                   type="button"
                   class="btn-prelisten-toggle ${
@@ -2265,6 +2654,22 @@ function renderSoundboard() {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         togglePrelistenTrack(Number(btn.dataset.prelistenTrack));
+      });
+    });
+
+    // Event-Listener für Warteschlange (➕)
+    grid.querySelectorAll("[data-queue-track]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleQueueTrack(Number(btn.dataset.queueTrack));
+      });
+    });
+
+    // Event-Listener für Gespielt-Häkchen (✓)
+    grid.querySelectorAll("[data-toggle-played]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        togglePlayedTrack(Number(el.dataset.togglePlayed));
       });
     });
 
@@ -2476,6 +2881,61 @@ function updatePlayerUI() {
     if (npNextRow) npNextRow.classList.add("hidden");
     if (mobTitle) mobTitle.textContent = t("np_no_track");
     if (mobSub) mobSub.textContent = isServerMode() ? t("mob_ready_server") : t("mob_ready_local");
+  }
+
+  // 🔒 Live-Schutz Button & ✓ Gespielt-Zähler aktualisieren
+  const playLockBtn = document.getElementById("playLockToggleBtn");
+  if (playLockBtn) {
+    playLockBtn.classList.toggle("active", Boolean(state.playLockEnabled));
+  }
+  const resetPlayedBtn = document.getElementById("resetPlayedBtn");
+  const playedCount = state.playedTrackIds ? state.playedTrackIds.size : 0;
+  if (resetPlayedBtn) {
+    resetPlayedBtn.classList.toggle("hidden", playedCount === 0);
+    resetPlayedBtn.textContent = `✓ ${playedCount} ↺`;
+  }
+
+  // 📋 Warteschlange (Next-Up Queue) im Deck rendern
+  const queueBox = document.getElementById("deckQueueBox");
+  const queueTitle = document.getElementById("deckQueueTitle");
+  const queueList = document.getElementById("deckQueueList");
+  const validQueueTracks = (state.queueTrackIds || [])
+    .map((id) => state.tracks.find((tr) => tr.id === Number(id)))
+    .filter(Boolean);
+
+  if (queueBox && queueTitle && queueList) {
+    if (validQueueTracks.length === 0) {
+      queueBox.classList.add("hidden");
+    } else {
+      queueBox.classList.remove("hidden");
+      queueTitle.textContent = t("queue_header_fmt", { count: validQueueTracks.length });
+      queueList.innerHTML = validQueueTracks
+        .map(
+          (tr, idx) => `
+          <div class="deck-queue-item">
+            <span class="deck-queue-item-title" data-play-queued="${tr.id}">#${idx + 1} ${escapeHtml(
+            tr.title
+          )}</span>
+            <button type="button" class="deck-queue-item-remove" data-rm-queued="${
+              tr.id
+            }" title="Aus Warteschlange entfernen">✕</button>
+          </div>
+        `
+        )
+        .join("");
+
+      queueList.querySelectorAll("[data-play-queued]").forEach((el) => {
+        el.addEventListener("click", () => {
+          const tr = state.tracks.find((item) => item.id === Number(el.dataset.playQueued));
+          if (tr) triggerTrackCue(tr, null, { forceOverride: true });
+        });
+      });
+      queueList.querySelectorAll("[data-rm-queued]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          toggleQueueTrack(Number(btn.dataset.rmQueued));
+        });
+      });
+    }
   }
 }
 
@@ -3572,6 +4032,107 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  document.getElementById("sfxConfigToggleBtn")?.addEventListener("click", () => {
+    state.sfxConfigOpen = !state.sfxConfigOpen;
+    if (state.sfxConfigOpen) {
+      renderSfxConfigDrawer();
+    }
+    updateSfxUI();
+  });
+
+  document.getElementById("sfxCustomUploadInput")?.addEventListener("change", async (e) => {
+    const file = e.target.files && e.target.files[0];
+    const sfxId = state.uploadingSfxId;
+    if (!file || !sfxId) return;
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`/api/sfx/${encodeURIComponent(sfxId)}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+      if (res.ok) {
+        state.sfxPadsMeta[sfxId] = state.sfxPadsMeta[sfxId] || {};
+        state.sfxPadsMeta[sfxId].custom_ts = Date.now();
+        if (!state.sfxPadsMeta[sfxId].label) {
+          const cleanName = file.name.replace(/\.[^.]+$/, "").slice(0, 18);
+          state.sfxPadsMeta[sfxId].label = cleanName;
+        }
+        await fetch("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sfx_pads_json: JSON.stringify(state.sfxPadsMeta || {}) }),
+        });
+        updateSfxUI();
+        renderSfxConfigDrawer();
+      }
+    } catch (_) {}
+  });
+
+  // 🔒 Live-Schutz (Play-Lock), ✓ Gespielt-Zähler & 📋 Warteschlange
+  document.getElementById("playLockToggleBtn")?.addEventListener("click", () => {
+    state.playLockEnabled = !state.playLockEnabled;
+    localStorage.setItem("arena_dj_play_lock", state.playLockEnabled ? "1" : "0");
+    if (!state.playLockEnabled) {
+      document.getElementById("playLockNoticeBar")?.classList.add("hidden");
+    }
+    updatePlayerUI();
+  });
+
+  document.getElementById("playLockForcePlayBtn")?.addEventListener("click", () => {
+    const pending = state.pendingForcePlay;
+    document.getElementById("playLockNoticeBar")?.classList.add("hidden");
+    state.pendingForcePlay = null;
+    if (pending && pending.track) {
+      triggerTrackCue(pending.track, pending.cue, { forceOverride: true });
+    }
+  });
+
+  document.getElementById("playLockDismissBtn")?.addEventListener("click", () => {
+    document.getElementById("playLockNoticeBar")?.classList.add("hidden");
+    state.pendingForcePlay = null;
+  });
+
+  document.getElementById("resetPlayedBtn")?.addEventListener("click", () => {
+    resetAllPlayedTracks();
+  });
+
+  document.getElementById("clearQueueBtn")?.addEventListener("click", () => {
+    clearQueueTracks();
+  });
+
+  // 🎚️ Live-Geschwindigkeit / Pitch- & Tempo-Regler (80% .. 120%)
+  const speedSlider = document.getElementById("playbackSpeedSlider");
+  if (speedSlider) {
+    speedSlider.addEventListener("pointerdown", () => {
+      state.isDraggingSpeed = true;
+    });
+    speedSlider.addEventListener("input", () => {
+      const pct = Number(speedSlider.value || 100);
+      setPlaybackSpeed(pct / 100, false);
+    });
+    const finishSpeedDrag = () => {
+      state.isDraggingSpeed = false;
+      const pct = Number(speedSlider.value || 100);
+      setPlaybackSpeed(pct / 100, true);
+    };
+    speedSlider.addEventListener("pointerup", finishSpeedDrag);
+    speedSlider.addEventListener("pointercancel", finishSpeedDrag);
+    speedSlider.addEventListener("change", finishSpeedDrag);
+  }
+
+  document.getElementById("speedDownBtn")?.addEventListener("click", () => {
+    setPlaybackSpeed((state.playbackSpeed || 1.0) - 0.02, true);
+  });
+
+  document.getElementById("speedUpBtn")?.addEventListener("click", () => {
+    setPlaybackSpeed((state.playbackSpeed || 1.0) + 0.02, true);
+  });
+
+  document.getElementById("speedResetBtn")?.addEventListener("click", () => {
+    setPlaybackSpeed(1.0, true);
+  });
+
   // Lied-Stammdaten speichern
   document.getElementById("saveTrackMetaBtn").addEventListener("click", saveEditorTrackMetadata);
 
@@ -4567,7 +5128,92 @@ document.addEventListener("DOMContentLoaded", () => {
     renderSecuritySection();
     renderSettingsCategories();
     renderUpdateVersionInfo();
+    state.learningHotkeyAction = null;
+    renderHotkeysGrid();
     settingsModal.classList.remove("hidden");
+  });
+
+  document.getElementById("resetHotkeysBtn")?.addEventListener("click", async () => {
+    state.hotkeys = { ...DEFAULT_HOTKEYS };
+    state.learningHotkeyAction = null;
+    renderHotkeysGrid();
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hotkeys_json: JSON.stringify(state.hotkeys) }),
+    });
+  });
+
+  // ⌨️ Globale Tastenkürzel (Hotkeys) inkl. Lern-Modus für eigene Tastenbelegung
+  window.addEventListener("keydown", async (e) => {
+    if (state.learningHotkeyAction) {
+      e.preventDefault();
+      e.stopPropagation();
+      const act = state.learningHotkeyAction;
+      state.learningHotkeyAction = null;
+      if (e.key !== "Escape") {
+        state.hotkeys[act] = e.key;
+        renderHotkeysGrid();
+        await fetch("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hotkeys_json: JSON.stringify(state.hotkeys) }),
+        });
+      } else {
+        renderHotkeysGrid();
+      }
+      return;
+    }
+
+    const activeEl = document.activeElement;
+    if (
+      activeEl &&
+      (activeEl.tagName === "INPUT" ||
+        activeEl.tagName === "TEXTAREA" ||
+        activeEl.tagName === "SELECT" ||
+        activeEl.isContentEditable)
+    ) {
+      return;
+    }
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+    const pressed = e.key;
+    const matchKey = (bound) => {
+      if (!bound) return false;
+      if (bound.length === 1 && pressed.length === 1) {
+        return bound.toLowerCase() === pressed.toLowerCase();
+      }
+      return bound === pressed;
+    };
+
+    const hk = state.hotkeys || DEFAULT_HOTKEYS;
+    if (matchKey(hk.play_pause)) {
+      e.preventDefault();
+      togglePlayPause();
+    } else if (matchKey(hk.fade_out)) {
+      e.preventDefault();
+      triggerSmoothFadeOut(false);
+    } else if (matchKey(hk.stop)) {
+      e.preventDefault();
+      stopImmediate();
+    } else if (matchKey(hk.talkover)) {
+      e.preventDefault();
+      toggleTalkover();
+    } else if (matchKey(hk.skip_next)) {
+      e.preventDefault();
+      playNextTrack({
+        isCrossfade: state.isPlaying && state.settings.crossfade_enabled,
+        crossfadeSec: Number(state.settings.fade_out_duration || 2.0),
+      });
+    } else {
+      for (let i = 0; i < 6; i++) {
+        if (matchKey(hk[`sfx_${i + 1}`])) {
+          e.preventDefault();
+          triggerSfx(SFX_IDS[i]);
+          break;
+        }
+      }
+    }
   });
 
   document.getElementById("copyMagicUrlBtn").addEventListener("click", async () => {

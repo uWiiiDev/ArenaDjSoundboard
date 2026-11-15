@@ -210,27 +210,49 @@ def _synthesize_sfx_stereo(sfx_id: str) -> np.ndarray:
     return (stereo.reshape(-1) * 32767.0).astype(np.float32)
 
 
+def load_sfx_wav_buffer(wav_path: Path) -> np.ndarray | None:
+    """Liest eine 48-kHz-Stereo-WAV-Datei als float32-Puffer (-32768..32767) ein."""
+    if not wav_path.is_file():
+        return None
+    try:
+        with wave.open(str(wav_path), "rb") as wf:
+            raw = wf.readframes(wf.getnframes())
+            arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+            if len(arr) >= CHANNELS * 200:
+                return arr
+    except Exception as e:
+        print(f"Hinweis beim Laden von {wav_path.name}: {e}")
+    return None
+
+
+def write_default_sfx_wav(sfx_id: str, wav_path: Path) -> np.ndarray:
+    buf = _synthesize_sfx_stereo(sfx_id)
+    try:
+        pcm_int16 = np.clip(buf, -32768.0, 32767.0).astype(np.int16).tobytes()
+        with wave.open(str(wav_path), "wb") as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(2)
+            wf.setframerate(SAMPLE_RATE)
+            wf.writeframes(pcm_int16)
+    except Exception as e:
+        print(f"Hinweis beim Erzeugen von {wav_path.name}: {e}")
+    return buf
+
+
 def ensure_arena_sfx_files(sfx_dir: Path) -> dict[str, np.ndarray]:
     """
     Stellt sicher, dass alle 6 Arena-Soundeffekte als .wav in data/sfx/ liegen
-    und gibt sie als float32-Stereo-Puffer für den Echtzeit-Server-Mixer zurück.
+    (inkl. benutzerdefinierter Uploads) und gibt sie als float32-Stereo-Puffer zurück.
     """
     sfx_dir.mkdir(parents=True, exist_ok=True)
     buffers: dict[str, np.ndarray] = {}
     for sfx_id in SFX_IDS:
         wav_path = sfx_dir / f"{sfx_id}.wav"
-        buf = _synthesize_sfx_stereo(sfx_id)
-        buffers[sfx_id] = buf
-        if not wav_path.exists():
-            try:
-                pcm_int16 = np.clip(buf, -32768.0, 32767.0).astype(np.int16).tobytes()
-                with wave.open(str(wav_path), "wb") as wf:
-                    wf.setnchannels(CHANNELS)
-                    wf.setsampwidth(2)
-                    wf.setframerate(SAMPLE_RATE)
-                    wf.writeframes(pcm_int16)
-            except Exception as e:
-                print(f"Hinweis beim Erzeugen von {wav_path.name}: {e}")
+        loaded = load_sfx_wav_buffer(wav_path)
+        if loaded is not None:
+            buffers[sfx_id] = loaded
+        else:
+            buffers[sfx_id] = write_default_sfx_wav(sfx_id, wav_path)
     return buffers
 
 
@@ -332,13 +354,17 @@ class _DeckStream:
                 return True
         return False
 
-    def read_chunk_float(self) -> np.ndarray | None:
+    def read_chunk_float(self, speed: float = 1.0) -> np.ndarray | None:
         if self.paused or self.proc is None or self.proc.stdout is None:
             return None
 
+        spd = max(0.75, min(1.30, float(speed)))
+        need_frames = FRAMES_PER_CHUNK if abs(spd - 1.0) < 0.005 else max(200, int(round(FRAMES_PER_CHUNK * spd)))
+        need_bytes = need_frames * CHANNELS * 2
+
         raw = b""
-        while len(raw) < BYTES_PER_CHUNK:
-            part = self.proc.stdout.read(BYTES_PER_CHUNK - len(raw))
+        while len(raw) < need_bytes:
+            part = self.proc.stdout.read(need_bytes - len(raw))
             if not part:
                 break
             raw += part
@@ -350,11 +376,19 @@ class _DeckStream:
         frames_got = len(raw) // (CHANNELS * 2)
         self.current_time += frames_got / SAMPLE_RATE
 
-        if len(raw) < BYTES_PER_CHUNK:
+        if len(raw) < need_bytes:
             self.eof_reached = True
-            raw = raw + b"\x00" * (BYTES_PER_CHUNK - len(raw))
+            raw = raw + b"\x00" * (need_bytes - len(raw))
 
         samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+        if need_frames != FRAMES_PER_CHUNK:
+            stereo = samples.reshape((need_frames, CHANNELS))
+            x_src = np.linspace(0.0, 1.0, need_frames, dtype=np.float32)
+            x_dst = np.linspace(0.0, 1.0, FRAMES_PER_CHUNK, dtype=np.float32)
+            out_l = np.interp(x_dst, x_src, stereo[:, 0]).astype(np.float32)
+            out_r = np.interp(x_dst, x_src, stereo[:, 1]).astype(np.float32)
+            samples = np.column_stack((out_l, out_r)).reshape(-1)
+
         gain = max(0.0, min(1.5, self.track_volume * self.fade_gain))
         return samples * gain
 
@@ -465,9 +499,47 @@ class ServerAudioEngine:
         self.sfx_pos: int = 0
         self.sfx_duck_music: bool = True
 
+        # 📋 Warteschlange ("Als Nächstes spielen"), Gespielt-Historie & Live-Tempo/Pitch
+        self.queue_track_ids: list[int] = []
+        self.played_track_ids: set[int] = set()
+        self.playback_speed: float = 1.0
+
         self._running = True
         self._thread = threading.Thread(target=self._mixer_loop, daemon=True)
         self._thread.start()
+
+    def reload_sfx_from_disk(self, sfx_id: str):
+        with self.lock:
+            wav_path = self.sfx_dir / f"{sfx_id}.wav"
+            loaded = load_sfx_wav_buffer(wav_path)
+            if loaded is not None:
+                self.sfx_buffers[sfx_id] = loaded
+
+    def reset_sfx_to_default(self, sfx_id: str):
+        with self.lock:
+            if sfx_id not in SFX_IDS:
+                return
+            wav_path = self.sfx_dir / f"{sfx_id}.wav"
+            self.sfx_buffers[sfx_id] = write_default_sfx_wav(sfx_id, wav_path)
+
+    def set_playback_speed(self, speed: float):
+        with self.lock:
+            self.playback_speed = round(max(0.80, min(1.20, float(speed))), 2)
+
+    def queue_add(self, track_id: int):
+        with self.lock:
+            tid = int(track_id)
+            if tid not in self.queue_track_ids:
+                self.queue_track_ids.append(tid)
+
+    def queue_remove(self, track_id: int):
+        with self.lock:
+            tid = int(track_id)
+            self.queue_track_ids = [x for x in self.queue_track_ids if x != tid]
+
+    def queue_clear(self):
+        with self.lock:
+            self.queue_track_ids.clear()
 
     def trigger_sfx(self, sfx_id: str, duck_music: bool = True):
         with self.lock:
@@ -690,7 +762,13 @@ class ServerAudioEngine:
 
             tid = track.get("id")
             if tid is not None:
-                self.shuffle_history.append(int(tid))
+                itid = int(tid)
+                self.played_track_ids.add(itid)
+                if self.queue_track_ids and self.queue_track_ids[0] == itid:
+                    self.queue_track_ids.pop(0)
+                elif itid in self.queue_track_ids:
+                    self.queue_track_ids.remove(itid)
+                self.shuffle_history.append(itid)
                 if len(self.shuffle_history) > 250:
                     self.shuffle_history = self.shuffle_history[-250:]
             self.planned_next_track_id = None
@@ -818,6 +896,18 @@ class ServerAudioEngine:
     def _pick_next_track(
         self, current_track: dict, tracks: list[dict], consume_planned: bool = True
     ) -> dict | None:
+        # 1. Wunsch-Warteschlange ("Als Nächstes spielen") hat immer höchste Priorität!
+        if self.queue_track_ids:
+            by_id = {t["id"]: t for t in tracks}
+            while self.queue_track_ids:
+                q_id = self.queue_track_ids[0]
+                if q_id in by_id:
+                    chosen_q = by_id[q_id]
+                    if consume_planned:
+                        self.queue_track_ids.pop(0)
+                    return chosen_q
+                self.queue_track_ids.pop(0)
+
         pool = self._get_candidate_pool(current_track, tracks)
         if not pool:
             return None
@@ -923,6 +1013,9 @@ class ServerAudioEngine:
                 "eq_bands": [round(float(g), 1) for g in self.eq_gains_db],
                 "spectrum": [round(float(s), 1) for s in self.spectrum_bands],
                 "active_sfx": self.active_sfx_id if sfx_active else None,
+                "playback_speed": round(self.playback_speed, 2),
+                "queue_track_ids": list(self.queue_track_ids),
+                "played_track_ids": sorted(self.played_track_ids),
             }
 
     def _apply_eq_and_spectrum_locked(self, mixed_flat: np.ndarray) -> np.ndarray:
@@ -993,7 +1086,7 @@ class ServerAudioEngine:
                     mixed = np.zeros(FRAMES_PER_CHUNK * CHANNELS, dtype=np.float32)
                     for d in self.decks:
                         if not d.paused:
-                            chunk = d.read_chunk_float()
+                            chunk = d.read_chunk_float(self.playback_speed)
                             if chunk is not None:
                                 mixed += chunk
                             stopped_by_fade = d.step_fade(CHUNK_SEC)

@@ -12,7 +12,7 @@
   <link rel="alternate icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="stylesheet" href="/styles.css?v=20261115d" />
+  <link rel="stylesheet" href="/styles.css?v=20261115e" />
 </head>
 <body>
   <!-- RESUME BANNER FÜR LOKALEN GERÄTE-TON NACH ERZWUNGENEM SEITEN-RELOAD (iOS SAFARI) -->
@@ -269,6 +269,26 @@
 
           <button
             type="button"
+            class="btn-playlock-toggle"
+            id="playLockToggleBtn"
+            data-i18n-title="playlock_btn_title"
+            title="Live-Schutz (Play-Lock): Verhindert versehentliches Abbrechen des laufenden Liedes und reiht angetippte Lieder stattdessen in die Warteschlange ein"
+          >
+            🔒 <span data-i18n="playlock_btn">Schutz</span>
+          </button>
+
+          <button
+            type="button"
+            class="btn-reset-played hidden"
+            id="resetPlayedBtn"
+            data-i18n-title="reset_played_title"
+            title="Alle '✓ Gespielt'-Markierungen für einen neuen Wettkampftag zurücksetzen"
+          >
+            ✓ <span id="playedCountBadge">0</span> ↺
+          </button>
+
+          <button
+            type="button"
             class="btn-bulk-pill"
             id="bulkSelectToggleBtn"
             data-i18n-title="bulk_mode_btn_title"
@@ -338,9 +358,25 @@
           <button type="button" class="sfx-duck-pill active" id="sfxDuckToggleBtn" data-i18n-title="sfx_duck_title" title="Musik während Jingle automatisch leicht absenken (Overlay-Ducking)">
             🔉 <span data-i18n="sfx_duck_btn">Duck</span>
           </button>
+          <button type="button" class="sfx-config-pill" id="sfxConfigToggleBtn" data-i18n-title="sfx_config_title" title="Jingle-Pads anpassen / eigene MP3s zuweisen">
+            ⚙️
+          </button>
           <button type="button" class="sfx-stop-pill hidden" id="sfxStopBtn" data-i18n-title="sfx_stop_title" title="Laufenden Jingle sofort stoppen">
             ⏹
           </button>
+        </div>
+        <div class="sfx-config-drawer hidden" id="sfxConfigDrawer"></div>
+        <input type="file" id="sfxCustomUploadInput" accept="audio/*,.mp3,.wav,.ogg,.m4a,.flac" hidden />
+      </div>
+
+      <!-- LIVE-SCHUTZ (PLAY-LOCK) HINWEISLEISTE -->
+      <div class="playlock-notice-bar hidden" id="playLockNoticeBar">
+        <span class="playlock-notice-text" id="playLockNoticeText">🔒 Live-Schutz aktiv: Lied wurde in die Warteschlange eingereiht.</span>
+        <div class="playlock-notice-actions">
+          <button type="button" class="btn btn-primary btn-bulk-sm" id="playLockForcePlayBtn" data-i18n="playlock_force_btn">
+            ▶ Trotzdem sofort starten
+          </button>
+          <button type="button" class="btn btn-secondary btn-bulk-sm" id="playLockDismissBtn">✕</button>
         </div>
       </div>
 
@@ -517,6 +553,14 @@
             <span class="np-next-text" id="npNextText">⏭ Danach: –</span>
             <button type="button" class="btn-skip-next" id="btnSkipNext" data-i18n="skip_next_btn" data-i18n-title="skip_next_title" title="Sofort zum nächsten Lied springen">⏭ Nächstes</button>
           </div>
+          <!-- WUNSCH-WARTESCHLANGE ("ALS NÄCHSTES SPIELEN" / QUEUE) -->
+          <div class="deck-queue-box hidden" id="deckQueueBox">
+            <div class="deck-queue-header">
+              <span class="deck-queue-title" id="deckQueueTitle">📋 Warteschlange (0)</span>
+              <button type="button" class="btn-queue-clear" id="clearQueueBtn" data-i18n="queue_clear_btn">Leeren</button>
+            </div>
+            <div class="deck-queue-list" id="deckQueueList"></div>
+          </div>
         </div>
 
         <!-- INTERAKTIVE LIVE-WAVEFORM & FORTSCHRITT -->
@@ -653,6 +697,15 @@
               <span class="eq-band-sub" data-i18n="eq_sub_4">Höhen</span>
             </div>
           </div>
+        </div>
+
+        <!-- LIVE-GESCHWINDIGKEIT / TEMPO & PITCH REGLER (80% .. 120%) -->
+        <div class="speed-control-bar" id="speedControlBar">
+          <span class="speed-label" data-i18n="speed_label">⚡ Tempo:</span>
+          <button type="button" class="btn-speed-step" id="speedDownBtn" title="-2%">-2%</button>
+          <input type="range" class="speed-slider" id="playbackSpeedSlider" min="80" max="120" step="1" value="100" aria-label="Tempo / Pitch" />
+          <button type="button" class="btn-speed-step" id="speedUpBtn" title="+2%">+2%</button>
+          <button type="button" class="btn-speed-reset" id="speedResetBtn" title="Auf 100% Originaltempo zurücksetzen">100%</button>
         </div>
 
         <!-- TRANSPORT & FADE CONTROLS -->
@@ -1087,6 +1140,20 @@
           </div>
         </div>
 
+        <!-- FREI BELEGBARE TASTENKÜRZEL (CUSTOM HOTKEYS) -->
+        <div class="autogain-box hotkeys-box" id="hotkeysConfigBox">
+          <div class="update-header">
+            <span data-i18n="hotkeys_heading">⌨️ Eigene Tastenkürzel (Hotkeys frei festlegen)</span>
+            <button type="button" class="btn btn-secondary btn-bulk-sm" id="resetHotkeysBtn" data-i18n="hotkeys_reset_btn">
+              ↺ Standard-Tasten
+            </button>
+          </div>
+          <div class="update-cur-sub" data-i18n="hotkeys_sub">
+            Klicke auf ein Tastenkürzel und drücke anschließend die gewünschte Taste auf deiner Tastatur (oder deinem USB-Keypad/Buzzer), um sie neu zuzuweisen:
+          </div>
+          <div class="hotkeys-grid" id="hotkeysListGrid"></div>
+        </div>
+
         <!-- 1-KLICK WETTKAMPF-BACKUP (.ZIP INKL. ALLER MP3S, KATEGORIEN & HIGHLIGHTS) -->
         <div class="autogain-box backup-zip-box">
           <div class="update-header">
@@ -1150,7 +1217,7 @@
     </div>
   </div>
 
-  <script src="/i18n.js?v=20261115d"></script>
-  <script src="/app.js?v=20261115d"></script>
+  <script src="/i18n.js?v=20261115e"></script>
+  <script src="/app.js?v=20261115e"></script>
 </body>
 </html>
