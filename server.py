@@ -925,6 +925,12 @@ def trim_track_silence_file(filepath: Path) -> tuple[bool, float, float]:
 SPOTDL_VENV_DIR = Path.home() / ".local" / "share" / "arena-dj-soundboard" / "spotdl-venv"
 YTDLP_STANDALONE_PATH = Path.home() / ".local" / "share" / "arena-dj-soundboard" / "bin" / "yt-dlp"
 SPOTDL_LOCK = threading.Lock()
+STATE_REVISION = 1
+
+
+def bump_state_revision():
+    global STATE_REVISION
+    STATE_REVISION += 1
 SPOTDL_PROC: subprocess.Popen | None = None
 SPOTDL_CANCEL_REQUESTED = False
 SPOTDL_JOB: dict = {
@@ -1382,6 +1388,7 @@ def start_spotdl_download_job(raw_query: str, category_id: str, fallback_categor
                             total = SPOTDL_JOB["total_count"]
                             SPOTDL_JOB["message"] = f"({done}/{total}) Importiert: {track_info['artist']} – {track_info['title']}".strip(" –")
                             SPOTDL_JOB["updated_at"] = time.time()
+                        bump_state_revision()
                         _append_spotdl_log(f"✓ Importiert: {track_info['artist']} – {track_info['title']}".strip(" –"))
                 else:
                     _append_spotdl_log(f"⚠️ Übersprungen (kein Audio-Stream gefunden): {display_name}")
@@ -1877,6 +1884,7 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             if not authed:
                 return self.send_json({"error": "Nicht autorisiert"}, 401)
             status = PLAYER_ENGINE.get_status() if PLAYER_ENGINE else {"audio_available": False}
+            status["state_revision"] = STATE_REVISION
             return self.send_json(status)
         if path == "/api/auth/qr.svg":
             if not authed:
@@ -2111,7 +2119,12 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
                     "has_custom_password": "auth_initial_pin_hint" not in raw_settings,
                     "is_localhost": self.is_localhost_client(),
                 },
-                "player_status": PLAYER_ENGINE.get_status() if PLAYER_ENGINE else {"audio_available": False},
+                "player_status": (
+                    {**PLAYER_ENGINE.get_status(), "state_revision": STATE_REVISION}
+                    if PLAYER_ENGINE
+                    else {"audio_available": False, "state_revision": STATE_REVISION}
+                ),
+                "state_revision": STATE_REVISION,
                 "system_version": get_local_git_info(),
             }
         )
@@ -2224,56 +2237,86 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
             return self.handle_change_password()
 
         if path == "/api/tracks":
-            return self.handle_upload_tracks()
+            res = self.handle_upload_tracks()
+            bump_state_revision()
+            return res
 
         if path == "/api/tracks/bulk-delete":
-            return self.handle_bulk_delete_tracks()
+            res = self.handle_bulk_delete_tracks()
+            bump_state_revision()
+            return res
 
         if path == "/api/tracks/normalize-all":
-            return self.handle_normalize_all_tracks()
+            res = self.handle_normalize_all_tracks()
+            bump_state_revision()
+            return res
 
         if path == "/api/tracks/trim-silence-all":
-            return self.handle_trim_silence_all_tracks()
+            res = self.handle_trim_silence_all_tracks()
+            bump_state_revision()
+            return res
 
         if path == "/api/tracks/detect-bpm-all":
-            return self.handle_detect_all_bpm()
+            res = self.handle_detect_all_bpm()
+            bump_state_revision()
+            return res
 
         if path == "/api/backup/restore-zip":
-            return self.handle_import_zip()
+            res = self.handle_import_zip()
+            bump_state_revision()
+            return res
 
         m_autogain = re.match(r"^/api/tracks/(\d+)/auto-gain$", path)
         if m_autogain:
-            return self.handle_auto_gain_track(int(m_autogain.group(1)))
+            res = self.handle_auto_gain_track(int(m_autogain.group(1)))
+            bump_state_revision()
+            return res
 
         m_autobpm = re.match(r"^/api/tracks/(\d+)/auto-bpm$", path)
         if m_autobpm:
-            return self.handle_auto_bpm_track(int(m_autobpm.group(1)))
+            res = self.handle_auto_bpm_track(int(m_autobpm.group(1)))
+            bump_state_revision()
+            return res
 
         m_trimsilence = re.match(r"^/api/tracks/(\d+)/trim-silence$", path)
         if m_trimsilence:
-            return self.handle_trim_silence_track(int(m_trimsilence.group(1)))
+            res = self.handle_trim_silence_track(int(m_trimsilence.group(1)))
+            bump_state_revision()
+            return res
 
         m_autocues = re.match(r"^/api/tracks/(\d+)/auto-cues$", path)
         if m_autocues:
-            return self.handle_auto_detect_cues(int(m_autocues.group(1)))
+            res = self.handle_auto_detect_cues(int(m_autocues.group(1)))
+            bump_state_revision()
+            return res
 
         m_cue = re.match(r"^/api/tracks/(\d+)/cues$", path)
         if m_cue:
-            return self.handle_create_cue(int(m_cue.group(1)))
+            res = self.handle_create_cue(int(m_cue.group(1)))
+            bump_state_revision()
+            return res
 
         m_sfx_up = re.match(r"^/api/sfx/([a-zA-Z0-9_-]+)/upload$", path)
         if m_sfx_up:
-            return self.handle_upload_custom_sfx(m_sfx_up.group(1))
+            res = self.handle_upload_custom_sfx(m_sfx_up.group(1))
+            bump_state_revision()
+            return res
 
         m_sfx_rst = re.match(r"^/api/sfx/([a-zA-Z0-9_-]+)/reset$", path)
         if m_sfx_rst:
-            return self.handle_reset_custom_sfx(m_sfx_rst.group(1))
+            res = self.handle_reset_custom_sfx(m_sfx_rst.group(1))
+            bump_state_revision()
+            return res
 
         if path == "/api/categories":
-            return self.handle_create_category()
+            res = self.handle_create_category()
+            bump_state_revision()
+            return res
 
         if path == "/api/import":
-            return self.handle_import()
+            res = self.handle_import()
+            bump_state_revision()
+            return res
 
         if path == "/api/system/update":
             return self.handle_system_update()
@@ -2298,18 +2341,26 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         path = parsed.path
 
         if path == "/api/tracks/reorder":
-            return self.handle_reorder_tracks()
+            res = self.handle_reorder_tracks()
+            bump_state_revision()
+            return res
 
         m_track = re.match(r"^/api/tracks/(\d+)$", path)
         if m_track:
-            return self.handle_update_track(int(m_track.group(1)))
+            res = self.handle_update_track(int(m_track.group(1)))
+            bump_state_revision()
+            return res
 
         m_cue = re.match(r"^/api/cues/(\d+)$", path)
         if m_cue:
-            return self.handle_update_cue(int(m_cue.group(1)))
+            res = self.handle_update_cue(int(m_cue.group(1)))
+            bump_state_revision()
+            return res
 
         if path == "/api/settings":
-            return self.handle_update_settings()
+            res = self.handle_update_settings()
+            bump_state_revision()
+            return res
 
         self.send_error(404, "Endpoint nicht gefunden")
 
@@ -2323,15 +2374,21 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
 
         m_track = re.match(r"^/api/tracks/(\d+)$", path)
         if m_track:
-            return self.handle_delete_track(int(m_track.group(1)))
+            res = self.handle_delete_track(int(m_track.group(1)))
+            bump_state_revision()
+            return res
 
         m_cue = re.match(r"^/api/cues/(\d+)$", path)
         if m_cue:
-            return self.handle_delete_cue(int(m_cue.group(1)))
+            res = self.handle_delete_cue(int(m_cue.group(1)))
+            bump_state_revision()
+            return res
 
         m_cat = re.match(r"^/api/categories/([a-zA-Z0-9_-]+)$", path)
         if m_cat:
-            return self.handle_delete_category(m_cat.group(1))
+            res = self.handle_delete_category(m_cat.group(1))
+            bump_state_revision()
+            return res
 
         self.send_error(404, "Endpoint nicht gefunden")
 
@@ -3240,10 +3297,14 @@ class ArenaDJRequestHandler(SimpleHTTPRequestHandler):
         elif action == "reset_played":
             with PLAYER_ENGINE.lock:
                 PLAYER_ENGINE.played_track_ids.clear()
+        elif action == "set_ui_state":
+            PLAYER_ENGINE.update_ui_state(data)
         else:
             return self.send_json({"error": f"Unbekannte Aktion: {action}"}, 400)
 
-        self.send_json({"ok": True, "player_status": PLAYER_ENGINE.get_status()})
+        status = PLAYER_ENGINE.get_status()
+        status["state_revision"] = STATE_REVISION
+        self.send_json({"ok": True, "player_status": status})
 
     def handle_upload_custom_sfx(self, sfx_id: str):
         allowed_ids = {"airhorn", "buzzer", "drumroll", "fanfare", "applause", "countdown"}

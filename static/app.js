@@ -54,6 +54,8 @@ const state = {
   isDraggingTrack: false,
   lastBoardSig: "",
   initialLoadDone: false,
+  serverRevision: 0,
+  isSyncingState: false,
   pendingResumeSnapshot: null,
   autoFollowEnabled: true,
   lastScrolledTrackId: null,
@@ -787,16 +789,27 @@ function syncVizAndEqUI() {
   }
 }
 
+function pushUiStateToServer(patch) {
+  if (!patch || typeof patch !== "object") return;
+  fetch("/api/player/command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "set_ui_state", ...patch }),
+  }).catch(() => {});
+}
+
 function setSpectrumVisible(visible) {
   state.showSpectrum = Boolean(visible);
   localStorage.setItem("arena_dj_show_spectrum", String(state.showSpectrum));
   syncVizAndEqUI();
+  pushUiStateToServer({ show_spectrum: state.showSpectrum });
 }
 
 function setEqVisible(visible) {
   state.showEq = Boolean(visible);
   localStorage.setItem("arena_dj_show_eq", String(state.showEq));
   syncVizAndEqUI();
+  pushUiStateToServer({ show_eq: state.showEq });
 }
 
 function cycleSpectrumStyle() {
@@ -805,6 +818,7 @@ function cycleSpectrumStyle() {
   state.spectrumStyle = order[(idx + 1) % order.length];
   localStorage.setItem("arena_dj_spectrum_style", state.spectrumStyle);
   syncVizAndEqUI();
+  pushUiStateToServer({ spectrum_style: state.spectrumStyle });
 }
 
 let _eqPushTimer = null;
@@ -1191,11 +1205,83 @@ function applyServerPlayerStatus(ps) {
   if (typeof ps.audio_available === "boolean") {
     state.serverAudioAvailable = ps.audio_available;
   }
+
+  // Falls auf der Fernsteuerung (iPad) Lieder, Highlights, Reihenfolgen, Kategorien oder Einstellungen
+  // geändert wurden (state_revision hat sich erhöht) -> Anzeige auf dem Server sofort nachladen!
+  if (
+    typeof ps.state_revision === "number" &&
+    state.initialLoadDone &&
+    state.serverRevision > 0 &&
+    ps.state_revision !== state.serverRevision &&
+    !state.isSyncingState &&
+    !state.isDraggingTrack &&
+    !state.isDraggingFader
+  ) {
+    state.serverRevision = ps.state_revision;
+    state.isSyncingState = true;
+    loadStateFromServer().finally(() => {
+      state.isSyncingState = false;
+    });
+  }
+
   if (!isServerMode()) return;
 
   const prevSig = `${state.isPlaying}:${state.currentTrack ? state.currentTrack.id : 0}:${
     state.currentCue ? state.currentCue.start_time : -1
-  }:${(state.queueTrackIds || []).join(",")}:${Array.from(state.playedTrackIds || []).join(",")}`;
+  }:${(state.queueTrackIds || []).join(",")}:${Array.from(state.playedTrackIds || []).join(",")}:${
+    state.activeCategory
+  }:${state.sortOrder}`;
+
+  if (typeof ps.active_category === "string" && ps.active_category !== state.activeCategory) {
+    state.activeCategory = ps.active_category;
+    renderCategories();
+  }
+
+  if (ps.ui_state && typeof ps.ui_state === "object") {
+    const ui = ps.ui_state;
+    if (typeof ui.sort_order === "string" && ui.sort_order !== state.sortOrder) {
+      state.sortOrder = ui.sort_order;
+      const sortSel = document.getElementById("trackSortSelect");
+      if (sortSel) sortSel.value = state.sortOrder;
+    }
+    if (
+      typeof ui.play_lock_enabled === "boolean" &&
+      ui.play_lock_enabled !== state.playLockEnabled
+    ) {
+      state.playLockEnabled = ui.play_lock_enabled;
+      localStorage.setItem("arena_dj_play_lock", state.playLockEnabled ? "1" : "0");
+      if (!state.playLockEnabled) {
+        document.getElementById("playLockNoticeBar")?.classList.add("hidden");
+      }
+    }
+    let vizUiChanged = false;
+    if (typeof ui.show_spectrum === "boolean" && ui.show_spectrum !== state.showSpectrum) {
+      state.showSpectrum = ui.show_spectrum;
+      localStorage.setItem("arena_dj_show_spectrum", String(state.showSpectrum));
+      vizUiChanged = true;
+    }
+    if (typeof ui.spectrum_style === "string" && ui.spectrum_style !== state.spectrumStyle) {
+      state.spectrumStyle = ui.spectrum_style;
+      localStorage.setItem("arena_dj_spectrum_style", state.spectrumStyle);
+      vizUiChanged = true;
+    }
+    if (typeof ui.show_eq === "boolean" && ui.show_eq !== state.showEq) {
+      state.showEq = ui.show_eq;
+      localStorage.setItem("arena_dj_show_eq", String(state.showEq));
+      vizUiChanged = true;
+    }
+    if (vizUiChanged) {
+      syncVizAndEqUI();
+    }
+    if (typeof ui.sfx_bar_visible === "boolean" && ui.sfx_bar_visible !== state.sfxBarVisible) {
+      state.sfxBarVisible = ui.sfx_bar_visible;
+      localStorage.setItem("arena_dj_sfx_bar", state.sfxBarVisible ? "1" : "0");
+    }
+    if (typeof ui.sfx_duck_enabled === "boolean" && ui.sfx_duck_enabled !== state.sfxDuckEnabled) {
+      state.sfxDuckEnabled = ui.sfx_duck_enabled;
+      localStorage.setItem("arena_dj_sfx_duck", state.sfxDuckEnabled ? "1" : "0");
+    }
+  }
 
   state.isPlaying = Boolean(ps.is_playing);
   state.isFadingOut = Boolean(ps.is_fading_out);
@@ -1311,14 +1397,15 @@ function applyServerPlayerStatus(ps) {
 
   const nextSig = `${state.isPlaying}:${state.currentTrack ? state.currentTrack.id : 0}:${
     state.currentCue ? state.currentCue.start_time : -1
-  }:${(state.queueTrackIds || []).join(",")}:${Array.from(state.playedTrackIds || []).join(",")}`;
+  }:${(state.queueTrackIds || []).join(",")}:${Array.from(state.playedTrackIds || []).join(",")}:${
+    state.activeCategory
+  }:${state.sortOrder}`;
   if (prevSig !== nextSig) {
     renderSoundboard();
   }
 }
 
 async function pollServerPlayerStatus() {
-  if (!isServerMode()) return;
   try {
     const res = await fetch("/api/player/status");
     if (res.ok) {
@@ -1987,6 +2074,9 @@ async function loadStateFromServer() {
     return;
   }
   const data = await res.json();
+  if (typeof data.state_revision === "number") {
+    state.serverRevision = data.state_revision;
+  }
   state.categories = data.categories || [];
   state.tracks = data.tracks || [];
   state.serverInfo = data.server_info || { lan_url: window.location.origin };
@@ -3970,6 +4060,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("trackSortSelect")?.addEventListener("change", (e) => {
     state.sortOrder = e.target.value || "custom";
     renderSoundboard();
+    pushUiStateToServer({ sort_order: state.sortOrder });
   });
 
   // 🎧 Vorhör-Leiste (Pre-Listen Bar) Buttons (-10s, +15s, Stop)
@@ -4049,12 +4140,14 @@ document.addEventListener("DOMContentLoaded", () => {
     state.sfxBarVisible = !state.sfxBarVisible;
     localStorage.setItem("arena_dj_sfx_bar", state.sfxBarVisible ? "1" : "0");
     updateSfxUI();
+    pushUiStateToServer({ sfx_bar_visible: state.sfxBarVisible });
   });
   document.getElementById("sfxDuckToggleBtn")?.addEventListener("click", () => {
     state.sfxDuckEnabled = !state.sfxDuckEnabled;
     localStorage.setItem("arena_dj_sfx_duck", state.sfxDuckEnabled ? "1" : "0");
     applyEffectiveVolume();
     updateSfxUI();
+    pushUiStateToServer({ sfx_duck_enabled: state.sfxDuckEnabled });
   });
   document.getElementById("sfxStopBtn")?.addEventListener("click", () => {
     stopSfx();
@@ -4110,6 +4203,7 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("playLockNoticeBar")?.classList.add("hidden");
     }
     updatePlayerUI();
+    pushUiStateToServer({ play_lock_enabled: state.playLockEnabled });
   });
 
   document.getElementById("playLockForcePlayBtn")?.addEventListener("click", () => {

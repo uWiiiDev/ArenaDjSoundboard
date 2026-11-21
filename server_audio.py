@@ -455,6 +455,15 @@ class ServerAudioEngine:
         self.shuffle_enabled = False
         self.shuffle_history: list[int] = []
         self.planned_next_track_id: int | None = None
+        self.ui_state: dict[str, object] = {
+            "sort_order": "custom",
+            "play_lock_enabled": False,
+            "show_spectrum": True,
+            "spectrum_style": "led",
+            "show_eq": False,
+            "sfx_bar_visible": True,
+            "sfx_duck_enabled": True,
+        }
 
         # 5-Band Equalizer (60Hz, 250Hz, 1kHz, 4kHz, 12kHz) & 24-Band Live-Spektrumanalyzer
         self.eq_enabled: bool = True
@@ -525,6 +534,23 @@ class ServerAudioEngine:
     def set_playback_speed(self, speed: float):
         with self.lock:
             self.playback_speed = round(max(0.80, min(1.20, float(speed))), 2)
+
+    def update_ui_state(self, patch: dict):
+        with self.lock:
+            for k in (
+                "sort_order",
+                "play_lock_enabled",
+                "show_spectrum",
+                "spectrum_style",
+                "show_eq",
+                "sfx_bar_visible",
+                "sfx_duck_enabled",
+            ):
+                if k in patch:
+                    self.ui_state[k] = patch[k]
+            if "active_category" in patch and patch["active_category"]:
+                self.active_category = str(patch["active_category"])
+                self.planned_next_track_id = None
 
     def queue_add(self, track_id: int):
         with self.lock:
@@ -1016,6 +1042,8 @@ class ServerAudioEngine:
                 "playback_speed": round(self.playback_speed, 2),
                 "queue_track_ids": list(self.queue_track_ids),
                 "played_track_ids": sorted(self.played_track_ids),
+                "active_category": self.active_category,
+                "ui_state": dict(self.ui_state),
             }
 
     def _apply_eq_and_spectrum_locked(self, mixed_flat: np.ndarray) -> np.ndarray:
